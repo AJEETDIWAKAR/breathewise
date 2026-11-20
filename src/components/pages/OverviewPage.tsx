@@ -1,4 +1,3 @@
-import React from 'react';
 import { ArrowRight, CheckCircle2, CloudOff, Info, ShieldAlert, Sprout } from 'lucide-react';
 import { summarizeImpactLogs } from '../../domain/impactCalculator';
 import { getDailyRecommendations, getFamilySafetySummary } from '../../domain/plannerRules';
@@ -81,6 +80,7 @@ export function OverviewPage() {
 
       {isUnavailable && (
         <UnavailableNotice
+          headingLevel="h2"
           title="Live AirLive reading unavailable for this location"
           message={
             liveError?.message ??
@@ -101,6 +101,7 @@ export function OverviewPage() {
 
       {isError && (
         <ErrorMessage
+          headingLevel="h2"
           title={
             liveError?.code === 'BACKEND_API_UNAVAILABLE'
               ? 'BreatheWise API server unavailable'

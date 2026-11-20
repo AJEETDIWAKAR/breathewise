@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { Suspense, lazy } from 'react';
+import { Suspense, lazy } from 'react';
 import { AppShell } from './components/layout/AppShell';
 import { OverviewPage } from './components/pages/OverviewPage';
 import { LoadingSkeleton } from './components/ui/States';

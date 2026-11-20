@@ -1,5 +1,7 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, LocateFixed, MapPin, Search, X } from 'lucide-react';
+import { useDeviceGeolocation } from '../../hooks/useDeviceGeolocation';
+import { useFocusTrap } from '../../hooks/useFocusTrap';
 import { useAppState } from '../../state/AppStateContext';
 import type { LocationOption } from '../../types/breathewise';
 
@@ -17,72 +19,60 @@ export function LocationSelector() {
 
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
-  const [geoLoading, setGeoLoading] = useState(false);
-  const [geoError, setGeoError] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const triggerRef = useRef<HTMLButtonElement | null>(null);
   const dialogRef = useRef<HTMLDivElement | null>(null);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const restoreFocusOnCloseRef = useRef(false);
-  const wasOpenRef = useRef(false);
+
+  const handleEscapeClose = useCallback(() => {
+    restoreFocusOnCloseRef.current = true;
+    setOpen(false);
+  }, []);
+
+  useFocusTrap({
+    active: open,
+    containerRef: dialogRef,
+    initialFocusRef: searchInputRef,
+    onEscape: handleEscapeClose,
+    restoreFocus: true,
+    shouldRestoreFocus: () => restoreFocusOnCloseRef.current,
+  });
+
+  const {
+    loading: geoLoading,
+    error: geoError,
+    clearError: clearGeoError,
+    requestLocation: handleUseDeviceLocation,
+  } = useDeviceGeolocation({
+    onResolveCoordinates: selectLocationByCoordinates,
+    unavailableMessage:
+      'Browser geolocation is unavailable in this environment. Search manually instead.',
+    deniedMessage: 'Location permission denied or timed out. Use manual search below.',
+    notFoundFallbackMessage: 'No supported AirLive station within 200 km of your coordinates.',
+    onSuccess: () => {
+      restoreFocusOnCloseRef.current = true;
+      setOpen(false);
+    },
+  });
 
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      setQuery('');
+      clearGeoError();
+      restoreFocusOnCloseRef.current = false;
+      return;
+    }
     const handleClickOutside = (e: MouseEvent) => {
       if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
         restoreFocusOnCloseRef.current = false;
         setOpen(false);
       }
     };
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        restoreFocusOnCloseRef.current = true;
-        setOpen(false);
-        return;
-      }
-      if (e.key === 'Tab' && dialogRef.current) {
-        const focusables = Array.from(
-          dialogRef.current.querySelectorAll<HTMLElement>(
-            'a[href], button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])',
-          ),
-        );
-        if (focusables.length === 0) return;
-        const first = focusables[0];
-        const last = focusables[focusables.length - 1];
-        if (e.shiftKey) {
-          if (document.activeElement === first || !dialogRef.current.contains(document.activeElement)) {
-            e.preventDefault();
-            last.focus();
-          }
-        } else if (document.activeElement === last || !dialogRef.current.contains(document.activeElement)) {
-          e.preventDefault();
-          first.focus();
-        }
-      }
-    };
     document.addEventListener('mousedown', handleClickOutside);
-    document.addEventListener('keydown', handleKeyDown);
     return () => {
       document.removeEventListener('mousedown', handleClickOutside);
-      document.removeEventListener('keydown', handleKeyDown);
     };
-  }, [open]);
-
-  useEffect(() => {
-    if (open) {
-      wasOpenRef.current = true;
-      window.setTimeout(() => searchInputRef.current?.focus(), 0);
-    } else {
-      setQuery('');
-      setGeoError(null);
-      if (wasOpenRef.current && restoreFocusOnCloseRef.current) {
-        triggerRef.current?.focus();
-      }
-      restoreFocusOnCloseRef.current = false;
-      wasOpenRef.current = false;
-    }
-  }, [open]);
+  }, [clearGeoError, open]);
 
   const placeMetricsBySlug = useMemo(() => {
     const map = new Map<string, { usAqi: number | null; source: string }>();
@@ -109,46 +99,14 @@ export function LocationSelector() {
 
   const handleSelect = (loc: LocationOption) => {
     setLocation(loc);
-    setGeoError(null);
+    clearGeoError();
     restoreFocusOnCloseRef.current = true;
     setOpen(false);
-  };
-
-  const handleUseDeviceLocation = () => {
-    if (typeof navigator === 'undefined' || !navigator.geolocation) {
-      setGeoError('Browser geolocation is unavailable in this environment. Search manually instead.');
-      return;
-    }
-    setGeoLoading(true);
-    setGeoError(null);
-    navigator.geolocation.getCurrentPosition(
-      async (pos) => {
-        try {
-          await selectLocationByCoordinates(pos.coords.latitude, pos.coords.longitude);
-          restoreFocusOnCloseRef.current = true;
-          setOpen(false);
-        } catch (err) {
-          setGeoError(
-            err instanceof Error
-              ? err.message
-              : 'No supported AirLive station within 200 km of your coordinates.',
-          );
-        } finally {
-          setGeoLoading(false);
-        }
-      },
-      () => {
-        setGeoLoading(false);
-        setGeoError('Location permission denied or timed out. Use manual search below.');
-      },
-      { enableHighAccuracy: false, timeout: 10_000, maximumAge: 300_000 },
-    );
   };
 
   return (
     <div ref={containerRef} className="relative">
       <button
-        ref={triggerRef}
         type="button"
         aria-label="Select monitoring location"
         aria-expanded={open}

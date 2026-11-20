@@ -8,6 +8,13 @@ import React, {
   useState,
 } from 'react';
 import {
+  clearAllAppStorage,
+  loadInitialPersistedState,
+  saveToStorage,
+  STORAGE_KEYS,
+} from './storagePersistence';
+import { mapPlaceToLocationOption } from '../domain/airliveNormalize';
+import {
   ANONYMOUS_MINIMAL_PROFILE,
   DEFAULT_FAMILY_PROFILE,
   DEFAULT_NOTIFICATIONS,
@@ -25,66 +32,20 @@ import {
   fetchLiveHistoryAirQuality,
   type AirLivePlaceDto,
 } from '../services/airQualityApi';
-import {
-  parseStoredImpactLogs,
-  parseStoredLocationOption,
-  parseStoredSettings,
-  parseStoredStringArray,
-  validateFamilyProfile,
-  type AirQualityRankingItem,
-  type AirQualityReading,
-  type AppNotification,
-  type AppSettings,
-  type DashboardDataState,
-  type FamilyProfile,
-  type HourlyForecastPoint,
-  type ImpactLogEntry,
-  type LocationOption,
-  type PageId,
+import type {
+  AirQualityRankingItem,
+  AirQualityReading,
+  AppNotification,
+  AppSettings,
+  DashboardDataState,
+  FamilyProfile,
+  HourlyForecastPoint,
+  ImpactLogEntry,
+  LocationOption,
+  PageId,
 } from '../types/breathewise';
 
-const STORAGE_KEYS = {
-  profile: 'breathewise.v1.profile',
-  location: 'breathewise.v1.location',
-  impactLogs: 'breathewise.v1.impactLogs',
-  settings: 'breathewise.v1.settings',
-  completedPlanner: 'breathewise.v1.completedPlanner',
-  completedIndoor: 'breathewise.v1.completedIndoor',
-};
-
 const CLIENT_READING_CACHE_TTL_MS = 5 * 60 * 1000;
-
-function loadFromStorage<T>(key: string, parse: (raw: unknown) => T | null, fallback: T): T {
-  try {
-    const raw = window.localStorage.getItem(key);
-    if (!raw) return fallback;
-    const parsed: unknown = JSON.parse(raw);
-    const validated = parse(parsed);
-    return validated !== null ? validated : fallback;
-  } catch {
-    return fallback;
-  }
-}
-
-function parseFamilyProfileFromStorage(raw: unknown): FamilyProfile | null {
-  const result = validateFamilyProfile(raw);
-  return result.success ? result.data : null;
-}
-
-function mapAirLiveDtoToLocationOption(place: AirLivePlaceDto): LocationOption {
-  return {
-    id: place.slug,
-    slug: place.slug,
-    name: place.name,
-    city: place.name,
-    state: place.countryName || place.country || 'India',
-    country: place.country,
-    countryName: place.countryName,
-    kind: place.kind,
-    lat: place.lat,
-    lon: place.lon,
-  };
-}
 
 export type LiveFetchStatus = 'idle' | 'loading' | 'ready' | 'unavailable' | 'error';
 
@@ -139,10 +100,19 @@ interface AppStateContextValue {
 const AppStateContext = createContext<AppStateContextValue | null>(null);
 
 export function AppStateProvider({ children }: { children: React.ReactNode }) {
-  const [activePage, setActivePage] = useState<PageId>('overview');
-  const [location, setLocationState] = useState<LocationOption>(() =>
-    loadFromStorage(STORAGE_KEYS.location, parseStoredLocationOption, PRESET_LOCATIONS[0]),
+  const initialPersisted = useMemo(
+    () =>
+      loadInitialPersistedState({
+        location: PRESET_LOCATIONS[0],
+        settings: DEFAULT_SETTINGS,
+        profile: DEFAULT_FAMILY_PROFILE,
+        impactLogs: DEFAULT_PREVIEW_IMPACT_LOGS,
+      }),
+    [],
   );
+
+  const [activePage, setActivePage] = useState<PageId>('overview');
+  const [location, setLocationState] = useState<LocationOption>(initialPersisted.location);
   const [airLivePlaces, setAirLivePlaces] = useState<AirLivePlaceDto[]>([]);
   const [placesLoading, setPlacesLoading] = useState<boolean>(true);
   const [placesError, setPlacesError] = useState<string | null>(null);
@@ -157,31 +127,25 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
     () => typeof navigator !== 'undefined' && navigator.onLine === false,
   );
 
-  const [settings, setSettings] = useState<AppSettings>(() =>
-    loadFromStorage(STORAGE_KEYS.settings, parseStoredSettings, DEFAULT_SETTINGS),
-  );
+  const [settings, setSettings] = useState<AppSettings>(initialPersisted.settings);
   const [dataState, setDataState] = useState<DashboardDataState>(() =>
-    settings.dataModePreference === 'live' ? 'live' : 'preview',
+    initialPersisted.settings.dataModePreference === 'live' ? 'live' : 'preview',
   );
   const [liveStatus, setLiveStatus] = useState<LiveFetchStatus>(() =>
-    settings.dataModePreference === 'live' ? 'loading' : 'idle',
+    initialPersisted.settings.dataModePreference === 'live' ? 'loading' : 'idle',
   );
   const [liveError, setLiveError] = useState<LiveFetchErrorInfo | null>(null);
   const [liveReading, setLiveReading] = useState<AirQualityReading | null>(null);
   const [liveForecast, setLiveForecast] = useState<HourlyForecastPoint[]>([]);
   const [liveRetryNonce, setLiveRetryNonce] = useState(0);
 
-  const [familyProfile, setFamilyProfile] = useState<FamilyProfile>(() =>
-    loadFromStorage(STORAGE_KEYS.profile, parseFamilyProfileFromStorage, DEFAULT_FAMILY_PROFILE),
+  const [familyProfile, setFamilyProfile] = useState<FamilyProfile>(initialPersisted.familyProfile);
+  const [impactLogs, setImpactLogs] = useState<ImpactLogEntry[]>(initialPersisted.impactLogs);
+  const [completedPlannerIds, setCompletedPlannerIds] = useState<string[]>(
+    initialPersisted.completedPlannerIds,
   );
-  const [impactLogs, setImpactLogs] = useState<ImpactLogEntry[]>(() =>
-    loadFromStorage(STORAGE_KEYS.impactLogs, parseStoredImpactLogs, DEFAULT_PREVIEW_IMPACT_LOGS),
-  );
-  const [completedPlannerIds, setCompletedPlannerIds] = useState<string[]>(() =>
-    loadFromStorage(STORAGE_KEYS.completedPlanner, parseStoredStringArray, []),
-  );
-  const [completedIndoorIds, setCompletedIndoorIds] = useState<string[]>(() =>
-    loadFromStorage(STORAGE_KEYS.completedIndoor, parseStoredStringArray, []),
+  const [completedIndoorIds, setCompletedIndoorIds] = useState<string[]>(
+    initialPersisted.completedIndoorIds,
   );
   const [readNotifIds, setReadNotifIds] = useState<string[]>([]);
   const coordLookupSeqRef = useRef(0);
@@ -227,7 +191,7 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
           setLocationState((prev) => {
             const match = res.items.find((p) => p.slug === prev.slug);
             if (!match) return prev;
-            const mapped = mapAirLiveDtoToLocationOption(match);
+            const mapped = mapPlaceToLocationOption(match);
             if (
               mapped.name === prev.name &&
               mapped.country === prev.country &&
@@ -288,7 +252,7 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
     const map = new Map<string, LocationOption>();
     if (airLivePlaces.length > 0) {
       for (const place of airLivePlaces) {
-        map.set(place.slug, mapAirLiveDtoToLocationOption(place));
+        map.set(place.slug, mapPlaceToLocationOption(place));
       }
     } else {
       for (const preset of PRESET_LOCATIONS) {
@@ -427,53 +391,12 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
     };
   }, [dataState, location.slug, location.lat, location.lon, liveRetryNonce]);
 
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(STORAGE_KEYS.location, JSON.stringify(location));
-    } catch {
-      // Ignore storage quota errors cleanly
-    }
-  }, [location]);
-
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(STORAGE_KEYS.profile, JSON.stringify(familyProfile));
-    } catch {
-      // Ignore storage quota errors cleanly
-    }
-  }, [familyProfile]);
-
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(STORAGE_KEYS.impactLogs, JSON.stringify(impactLogs));
-    } catch {
-      // Ignore storage quota errors cleanly
-    }
-  }, [impactLogs]);
-
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(STORAGE_KEYS.settings, JSON.stringify(settings));
-    } catch {
-      // Ignore storage quota errors cleanly
-    }
-  }, [settings]);
-
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(STORAGE_KEYS.completedPlanner, JSON.stringify(completedPlannerIds));
-    } catch {
-      // Ignore storage quota errors cleanly
-    }
-  }, [completedPlannerIds]);
-
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(STORAGE_KEYS.completedIndoor, JSON.stringify(completedIndoorIds));
-    } catch {
-      // Ignore storage quota errors cleanly
-    }
-  }, [completedIndoorIds]);
+  useEffect(() => saveToStorage(STORAGE_KEYS.location, location), [location]);
+  useEffect(() => saveToStorage(STORAGE_KEYS.profile, familyProfile), [familyProfile]);
+  useEffect(() => saveToStorage(STORAGE_KEYS.impactLogs, impactLogs), [impactLogs]);
+  useEffect(() => saveToStorage(STORAGE_KEYS.settings, settings), [settings]);
+  useEffect(() => saveToStorage(STORAGE_KEYS.completedPlanner, completedPlannerIds), [completedPlannerIds]);
+  useEffect(() => saveToStorage(STORAGE_KEYS.completedIndoor, completedIndoorIds), [completedIndoorIds]);
 
   const hourlyForecast = useMemo(() => {
     if (dataState === 'preview') return getPreviewFixtureForecast(location);
@@ -572,13 +495,7 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
 
   const clearPersonalData = useCallback(() => {
     coordLookupSeqRef.current += 1;
-    try {
-      for (const key of Object.values(STORAGE_KEYS)) {
-        window.localStorage.removeItem(key);
-      }
-    } catch {
-      // Ignore storage errors cleanly
-    }
+    clearAllAppStorage();
     setLocationState({ ...PRESET_LOCATIONS[0] });
     setFamilyProfile(ANONYMOUS_MINIMAL_PROFILE);
     setImpactLogs([]);

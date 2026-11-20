@@ -1,4 +1,5 @@
-import React, { useEffect, useRef, useState } from 'react';
+import type React from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Activity,
   BarChart3,
@@ -16,6 +17,7 @@ import {
   Wind,
   X,
 } from 'lucide-react';
+import { useFocusTrap } from '../../hooks/useFocusTrap';
 import { useAppState } from '../../state/AppStateContext';
 import type { PageId } from '../../types/breathewise';
 import { LocationSelector } from '../ui/LocationSelector';
@@ -61,10 +63,18 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const profileMenuRef = useRef<HTMLDivElement | null>(null);
   const mobileDrawerRef = useRef<HTMLDivElement | null>(null);
   const mobileCloseBtnRef = useRef<HTMLButtonElement | null>(null);
-  const previousFocusRef = useRef<HTMLElement | null>(null);
+
+  const closeMobileMenu = useCallback(() => setMobileMenuOpen(false), []);
+  useFocusTrap({
+    active: mobileMenuOpen,
+    containerRef: mobileDrawerRef,
+    initialFocusRef: mobileCloseBtnRef,
+    onEscape: closeMobileMenu,
+    restoreFocus: true,
+  });
 
   useEffect(() => {
-    if (!notifOpen && !profileOpen && !mobileMenuOpen) return;
+    if (!notifOpen && !profileOpen) return;
 
     const handleClickOutside = (e: MouseEvent) => {
       const target = e.target as Node;
@@ -82,7 +92,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         const wasNotifOpen = notifOpen;
         setNotifOpen(false);
         setProfileOpen(false);
-        setMobileMenuOpen(false);
         if (wasProfileOpen) {
           profileTriggerRef.current?.focus();
         } else if (wasNotifOpen) {
@@ -105,30 +114,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           items[nextIdx]?.focus();
         }
       }
-
-      if (mobileMenuOpen && e.key === 'Tab' && mobileDrawerRef.current) {
-        const focusables = Array.from(
-          mobileDrawerRef.current.querySelectorAll<HTMLElement>(
-            'a[href], button:not([disabled]), [tabindex]:not([tabindex="-1"])',
-          ),
-        );
-        if (focusables.length > 0) {
-          const first = focusables[0];
-          const last = focusables[focusables.length - 1];
-          if (e.shiftKey) {
-            if (document.activeElement === first || !mobileDrawerRef.current.contains(document.activeElement)) {
-              e.preventDefault();
-              last.focus();
-            }
-          } else if (
-            document.activeElement === last ||
-            !mobileDrawerRef.current.contains(document.activeElement)
-          ) {
-            e.preventDefault();
-            first.focus();
-          }
-        }
-      }
     };
 
     document.addEventListener('mousedown', handleClickOutside);
@@ -137,19 +122,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       document.removeEventListener('mousedown', handleClickOutside);
       document.removeEventListener('keydown', handleKeyDown);
     };
-  }, [notifOpen, profileOpen, mobileMenuOpen]);
-
-  useEffect(() => {
-    if (!mobileMenuOpen) return;
-    previousFocusRef.current = document.activeElement as HTMLElement | null;
-    const timer = window.setTimeout(() => mobileCloseBtnRef.current?.focus(), 0);
-    return () => {
-      window.clearTimeout(timer);
-      if (previousFocusRef.current && document.body.contains(previousFocusRef.current)) {
-        previousFocusRef.current.focus();
-      }
-    };
-  }, [mobileMenuOpen]);
+  }, [notifOpen, profileOpen]);
 
   const unreadCount = notifications.filter((n) => !n.read).length;
   const totalMembers =
@@ -344,7 +317,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                         <button
                           type="button"
                           onClick={markAllNotificationsRead}
-                          className="text-xs font-medium text-teal-800 hover:text-teal-900 cursor-pointer"
+                          className="min-h-6 px-2 py-1 inline-flex items-center rounded text-xs font-medium text-teal-800 hover:bg-teal-50 hover:text-teal-900 cursor-pointer"
                         >
                           Mark all read
                         </button>

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import { AlertTriangle, Check, Info } from 'lucide-react';
 import { calculateTransportShiftImpact } from '../../domain/impactCalculator';
 import {
@@ -7,6 +7,7 @@ import {
   type SustainableAlternativeItem,
   type SustainableAreaId,
 } from '../../domain/sustainableRules';
+import { useAutoClearState } from '../../hooks/useAutoClearTimer';
 import { useAppState } from '../../state/AppStateContext';
 import { createEntryId } from '../../utils/id';
 import { Button } from '../ui/Button';
@@ -18,16 +19,7 @@ type AreaFilter = 'all' | SustainableAreaId;
 export function SustainablePage() {
   const { currentReading, familyProfile, addImpactLog, setActivePage } = useAppState();
   const [filter, setFilter] = useState<AreaFilter>('all');
-  const [loggedId, setLoggedId] = useState<string | null>(null);
-  const loggedTimerRef = useRef<number | null>(null);
-
-  useEffect(() => {
-    return () => {
-      if (loggedTimerRef.current !== null) {
-        window.clearTimeout(loggedTimerRef.current);
-      }
-    };
-  }, []);
+  const [loggedId, triggerLoggedId] = useAutoClearState<string | null>(null, 2500);
 
   const activeAqi = currentReading?.aqi.value ?? null;
   const isUsAqi = !currentReading || currentReading.aqi.scale === 'US_AQI';
@@ -71,11 +63,7 @@ export function SustainablePage() {
         assumptions: item.assumptions,
       });
     }
-    setLoggedId(item.id);
-    if (loggedTimerRef.current !== null) {
-      window.clearTimeout(loggedTimerRef.current);
-    }
-    loggedTimerRef.current = window.setTimeout(() => setLoggedId(null), 2500);
+    triggerLoggedId(item.id);
   };
 
   return (

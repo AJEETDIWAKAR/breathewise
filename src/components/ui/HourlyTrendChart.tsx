@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import { useRef, useState, type KeyboardEvent } from 'react';
 import { getNaqiVisualTokens } from '../../domain/naqi';
 import { getUsAqiVisualTokens, normalizeUsAqiCategoryLabel } from '../../domain/usAqi';
 import type { AqiScale, HourlyForecastPoint, NaqiCategory, UsAqiCategory } from '../../types/breathewise';
@@ -15,6 +15,7 @@ export function HourlyTrendChart({
   caption,
 }: HourlyTrendChartProps) {
   const [selectedIdx, setSelectedIdx] = useState<number>(Math.min(6, Math.max(0, points.length - 1)));
+  const [focusedIdx, setFocusedIdx] = useState<number | null>(null);
   const [showTable, setShowTable] = useState<boolean>(false);
   const pointRefs = useRef<Array<SVGCircleElement | null>>([]);
 
@@ -65,7 +66,7 @@ export function HourlyTrendChart({
   const scaleLabel = isUs ? 'US AQI' : 'NAQI';
   const gridLevels = [100, 200, 300, 400].filter((v) => v <= yMaxCeil);
 
-  const handlePointKeyDown = (e: React.KeyboardEvent<SVGCircleElement>, idx: number) => {
+  const handlePointKeyDown = (e: KeyboardEvent<SVGCircleElement>, idx: number) => {
     let nextIdx: number | null = null;
     if (e.key === 'ArrowRight') {
       nextIdx = Math.min(coords.length - 1, idx + 1);
@@ -149,8 +150,19 @@ export function HourlyTrendChart({
 
           {coords.map((c, idx) => {
             const isActive = idx === clampedIdx;
+            const isFocused = idx === focusedIdx;
             return (
               <g key={`${c.pt.hourLabel}-${idx}`}>
+                {isFocused && (
+                  <circle
+                    cx={c.x}
+                    cy={c.y}
+                    r={10}
+                    fill="none"
+                    stroke="#0284c7"
+                    strokeWidth={2}
+                  />
+                )}
                 <circle
                   cx={c.x}
                   cy={c.y}
@@ -167,12 +179,16 @@ export function HourlyTrendChart({
                   cy={c.y}
                   r={14}
                   fill="transparent"
-                  className="cursor-pointer"
+                  className="cursor-pointer focus:outline-none"
                   tabIndex={0}
                   role="button"
                   aria-label={`Hour ${c.pt.hourLabel}: ${scaleLabel} ${c.pt.estimatedNaqi}, PM2.5 ${c.pt.pm25} µg/m³, ${c.pt.category}`}
                   onMouseEnter={() => setSelectedIdx(idx)}
-                  onFocus={() => setSelectedIdx(idx)}
+                  onFocus={() => {
+                    setSelectedIdx(idx);
+                    setFocusedIdx(idx);
+                  }}
+                  onBlur={() => setFocusedIdx((prev) => (prev === idx ? null : prev))}
                   onClick={() => setSelectedIdx(idx)}
                   onKeyDown={(e) => handlePointKeyDown(e, idx)}
                 />

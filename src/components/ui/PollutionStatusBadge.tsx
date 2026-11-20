@@ -1,4 +1,3 @@
-import React from 'react';
 import { AlertOctagon, AlertTriangle, CheckCircle2, Info } from 'lucide-react';
 import { getNaqiVisualTokens } from '../../domain/naqi';
 import { getUsAqiVisualTokens, normalizeUsAqiCategoryLabel } from '../../domain/usAqi';

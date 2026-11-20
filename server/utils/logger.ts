@@ -26,6 +26,7 @@ export function logWarn(scope: string, message: string, meta?: Record<string, un
 }
 
 export function logError(scope: string, message: string, err?: unknown): void {
-  const errMsg = err instanceof Error ? redactSensitiveText(err.message) : String(err ?? '');
+  const rawErrMsg = err instanceof Error ? err.message : err !== undefined ? String(err) : '';
+  const errMsg = rawErrMsg ? redactSensitiveText(rawErrMsg) : '';
   console.error(`[BreatheWise:${scope}] ${redactSensitiveText(message)}${errMsg ? ` :: ${errMsg}` : ''}`);
 }

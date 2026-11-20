@@ -1,4 +1,10 @@
 import {
+  AIRLIVE_BASE_URL,
+  filterAndSortLocationSearch,
+  mapPlaceToLocationOption,
+  resolveNearestOrMatchingPlace,
+} from '../../src/domain/airliveNormalize.ts';
+import {
   generateDailyPlan,
   getDailyRecommendations,
   getFamilySafetySummary,
@@ -21,7 +27,6 @@ import type {
   NormalizedHistoryResult,
 } from '../providers/types.ts';
 import { TtlCache } from '../utils/cache.ts';
-import { haversineKm } from '../utils/geo.ts';
 
 interface CachedPlacesDirectory {
   updated: string | null;
@@ -128,7 +133,7 @@ export class AirQualityService {
       updated: data.updated,
       count: items.length,
       attribution: data.attribution,
-      attributionUrl: 'https://airlive.tracsa.co.in',
+      attributionUrl: AIRLIVE_BASE_URL,
       cacheHit,
       items,
     };
@@ -136,40 +141,13 @@ export class AirQualityService {
 
   async searchLocations(query: string, limit = 15): Promise<LocationSearchResult[]> {
     const { data } = await this.getDirectory();
-    const needle = query.trim().toLowerCase();
-
-    const matches = data.items
-      .filter(
-        (item) =>
-          item.name.toLowerCase().includes(needle) ||
-          item.slug.toLowerCase().includes(needle) ||
-          item.countryName.toLowerCase().includes(needle),
-      )
-      .sort((a, b) => {
-        // Prioritize India locations, exact prefixes, and cities/localities over hubs/countries
-        const aIn = a.country === 'IN' ? 0 : 1;
-        const bIn = b.country === 'IN' ? 0 : 1;
-        if (aIn !== bIn) return aIn - bIn;
-
-        const aPrefix = a.name.toLowerCase().startsWith(needle) ? 0 : 1;
-        const bPrefix = b.name.toLowerCase().startsWith(needle) ? 0 : 1;
-        if (aPrefix !== bPrefix) return aPrefix - bPrefix;
-
-        return a.name.localeCompare(b.name);
-      })
-      .slice(0, limit);
+    const matches = filterAndSortLocationSearch(data.items, query, limit);
 
     return matches.map((item) => ({
-      id: item.slug,
-      slug: item.slug,
-      name: item.name,
-      city: item.name,
-      state: item.countryName || item.country || 'India',
+      ...mapPlaceToLocationOption(item),
       country: item.country,
       countryName: item.countryName,
       kind: item.kind,
-      lat: item.lat,
-      lon: item.lon,
       source: 'AirLive',
     }));
   }
@@ -182,42 +160,13 @@ export class AirQualityService {
     }
 
     const { data } = await this.getDirectory();
-    let matched: AirLivePlaceSummary | undefined;
-    let matchedDistanceKm: number | undefined;
+    const resolved = resolveNearestOrMatchingPlace(data.items, {
+      city: query.city,
+      lat: query.lat,
+      lon: query.lon,
+    });
 
-    if (query.city) {
-      const needle = query.city.trim().toLowerCase();
-      matched =
-        data.items.find((p) => p.slug.toLowerCase() === needle) ??
-        data.items.find((p) => p.name.toLowerCase() === needle) ??
-        data.items.find(
-          (p) =>
-            p.country === 'IN' &&
-            (p.name.toLowerCase().includes(needle) || p.slug.toLowerCase().includes(needle)),
-        ) ??
-        data.items.find(
-          (p) => p.name.toLowerCase().includes(needle) || p.slug.toLowerCase().includes(needle),
-        );
-    }
-
-    if (!matched && query.lat !== undefined && query.lon !== undefined) {
-      let bestDist = Infinity;
-      for (const item of data.items) {
-        if (item.kind === 'country') continue;
-        const dist = haversineKm(query.lat, query.lon, item.lat, item.lon);
-        if (dist < bestDist) {
-          bestDist = dist;
-          matched = item;
-        }
-      }
-      if (bestDist > 200) {
-        matched = undefined;
-      } else if (matched) {
-        matchedDistanceKm = Number(bestDist.toFixed(1));
-      }
-    }
-
-    if (!matched) {
+    if (!resolved) {
       throw new AppError(
         404,
         'LOCATION_NOT_FOUND',
@@ -226,7 +175,7 @@ export class AirQualityService {
       );
     }
 
-    return { slug: matched.slug, distanceKm: matchedDistanceKm };
+    return resolved;
   }
 
   async getCurrent(query: AirQualityQuery): Promise<NormalizedCurrentAirQuality> {

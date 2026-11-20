@@ -1,11 +1,12 @@
-import { getUsAqiCategory, normalizeUsAqiCategoryLabel } from '../../src/domain/usAqi.ts';
+import {
+  AIRLIVE_BASE_URL,
+  AIRLIVE_DEFAULT_ATTRIBUTION,
+  mapAirLivePlaceSummary,
+} from '../../src/domain/airliveNormalize.ts';
 import { AppError } from '../middleware/errorHandler.ts';
 import { sanitizeHttpUrl } from '../utils/geo.ts';
 import { fetchJsonWithRetry, UpstreamHttpError } from '../utils/httpClient.ts';
-import {
-  buildAirLiveNormalizedReading,
-  evaluateStaleness,
-} from '../utils/normalizeReading.ts';
+import { buildAirLiveNormalizedReading } from '../utils/normalizeReading.ts';
 import {
   SLUG_PATTERN,
   airliveAllPlacesSchema,
@@ -18,81 +19,6 @@ import type {
   AirQualityProvider,
   NormalizedCurrentAirQuality,
 } from './types.ts';
-
-const AIRLIVE_BASE_URL = 'https://airlive.tracsa.co.in';
-
-function mapAirLivePlaceSummary(
-  item: {
-    slug: string;
-    name: string;
-    kind: string;
-    country: string;
-    countryName: string;
-    lat: number;
-    lon: number;
-    usAqi?: number | null;
-    category?: string | null;
-    pm25?: number | null;
-    source?: string | null;
-    stationsUsed?: number | null;
-    modelUsAqi?: number | null;
-    stationToModelRatio?: number | null;
-    updated?: string | null;
-    url?: string;
-    attribution?: string;
-  },
-  defaultAttribution: string,
-): AirLivePlaceSummary {
-  const validUsAqi =
-    typeof item.usAqi === 'number' && Number.isFinite(item.usAqi) && item.usAqi >= 0
-      ? Math.round(item.usAqi)
-      : null;
-
-  const validPm25 =
-    typeof item.pm25 === 'number' && Number.isFinite(item.pm25) && item.pm25 >= 0
-      ? Number(item.pm25.toFixed(1))
-      : null;
-
-  const category =
-    validUsAqi !== null
-      ? getUsAqiCategory(validUsAqi)
-      : normalizeUsAqiCategoryLabel(item.category) ?? 'Unavailable';
-
-  const rawSource = (item.source ?? '').trim().toLowerCase();
-  const isGround = rawSource.includes('ground');
-  const staleness = evaluateStaleness(item.updated ?? null);
-
-  return {
-    slug: item.slug,
-    name: item.name,
-    kind: item.kind || 'city',
-    country: item.country || '',
-    countryName: item.countryName || item.country || '',
-    lat: item.lat,
-    lon: item.lon,
-    usAqi: validUsAqi,
-    category,
-    pm25: validPm25,
-    source: isGround ? 'ground stations' : 'atmospheric model',
-    measurementType: isGround ? 'ground_station' : 'modeled_forecast',
-    stationsUsed:
-      isGround && typeof item.stationsUsed === 'number' && Number.isFinite(item.stationsUsed)
-        ? item.stationsUsed
-        : null,
-    modelUsAqi:
-      typeof item.modelUsAqi === 'number' && Number.isFinite(item.modelUsAqi)
-        ? Math.round(item.modelUsAqi)
-        : null,
-    stationToModelRatio:
-      typeof item.stationToModelRatio === 'number' && Number.isFinite(item.stationToModelRatio)
-        ? Number(item.stationToModelRatio.toFixed(3))
-        : null,
-    updated: item.updated ?? null,
-    freshnessStatus: staleness.freshnessStatus,
-    url: sanitizeHttpUrl(item.url),
-    attribution: item.attribution || defaultAttribution,
-  };
-}
 
 export class AirliveProvider implements AirQualityProvider {
   readonly id = 'airlive' as const;
@@ -170,7 +96,7 @@ export class AirliveProvider implements AirQualityProvider {
     }
 
     const defaultAttr =
-      parsed.data.attribution || 'Data: AirLive (https://airlive.tracsa.co.in).';
+      parsed.data.attribution || AIRLIVE_DEFAULT_ATTRIBUTION;
 
     return {
       updated: parsed.data.updated ?? null,
@@ -258,7 +184,7 @@ export class AirliveProvider implements AirQualityProvider {
     }
 
     const defaultAttr =
-      parsed.data.attribution || 'Data: AirLive (https://airlive.tracsa.co.in).';
+      parsed.data.attribution || AIRLIVE_DEFAULT_ATTRIBUTION;
 
     return {
       updated: parsed.data.updated ?? null,

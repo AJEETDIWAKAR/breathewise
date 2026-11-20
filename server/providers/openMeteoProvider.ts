@@ -1,19 +1,9 @@
+import { isWithinIndiaBounds, toUtcIso } from '../../src/domain/airliveNormalize.ts';
 import { calculatePm25UsAqi, getUsAqiCategory } from '../../src/domain/usAqi.ts';
 import { AppError } from '../middleware/errorHandler.ts';
 import { fetchJsonWithRetry } from '../utils/httpClient.ts';
 import { openMeteoHourlySchema } from '../validators/airQualityValidators.ts';
 import type { HourlyHistoryPoint, NormalizedHistoryResult } from './types.ts';
-
-function toUtcIso(rawTime: string): string {
-  if (rawTime.endsWith('Z') || /[+-]\d{2}:\d{2}$/.test(rawTime)) {
-    return new Date(rawTime).toISOString();
-  }
-  return new Date(`${rawTime}:00Z`).toISOString();
-}
-
-function isWithinIndiaBounds(lat: number, lon: number): boolean {
-  return lat >= 6 && lat <= 38 && lon >= 68 && lon <= 98;
-}
 
 export class OpenMeteoProvider {
   readonly id = 'open_meteo_cams' as const;

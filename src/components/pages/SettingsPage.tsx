@@ -1,5 +1,6 @@
-import React, { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import { Check, ExternalLink, RotateCcw, ShieldCheck, Trash2 } from 'lucide-react';
+import { useAutoClearState } from '../../hooks/useAutoClearTimer';
 import { useAppState } from '../../state/AppStateContext';
 import { Button } from '../ui/Button';
 import { Card, CardHeader } from '../ui/Card';
@@ -16,24 +17,7 @@ export function SettingsPage() {
   } = useAppState();
   const [confirmResetOpen, setConfirmResetOpen] = useState(false);
   const [confirmClearOpen, setConfirmClearOpen] = useState(false);
-  const [savedNotice, setSavedNotice] = useState<string | null>(null);
-  const noticeTimerRef = useRef<number | null>(null);
-
-  useEffect(() => {
-    return () => {
-      if (noticeTimerRef.current !== null) {
-        window.clearTimeout(noticeTimerRef.current);
-      }
-    };
-  }, []);
-
-  const showSaved = (msg: string) => {
-    setSavedNotice(msg);
-    if (noticeTimerRef.current !== null) {
-      window.clearTimeout(noticeTimerRef.current);
-    }
-    noticeTimerRef.current = window.setTimeout(() => setSavedNotice(null), 2500);
-  };
+  const [savedNotice, showSaved] = useAutoClearState<string | null>(null, 2500);
 
   const handleDataModeChange = (val: 'preview' | 'live') => {
     updateSettings({ ...settings, dataModePreference: val });
@@ -129,7 +113,7 @@ export function SettingsPage() {
                 href="https://airlive.tracsa.co.in"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex items-center gap-1 text-xs font-medium text-teal-800 hover:underline"
+                className="min-h-6 px-1 rounded inline-flex items-center gap-1 text-xs font-medium text-teal-800 hover:underline"
               >
                 <span>airlive.tracsa.co.in</span>
                 <ExternalLink className="w-3 h-3" aria-hidden="true" />

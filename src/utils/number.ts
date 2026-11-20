@@ -1,3 +1,5 @@
+import { sanitizeHttpUrl } from '../domain/airliveNormalize';
+
 export function parseBoundedInt(
   raw: string,
   min: number,
@@ -12,6 +14,5 @@ export function parseBoundedInt(
 }
 
 export function isSafeHttpUrl(url?: string | null): url is string {
-  if (!url) return false;
-  return /^https?:\/\//i.test(url.trim());
+  return sanitizeHttpUrl(url) !== undefined;
 }

@@ -1,5 +1,7 @@
-import React, { useEffect, useId, useRef } from 'react';
+import type React from 'react';
+import { useId, useRef } from 'react';
 import { X } from 'lucide-react';
+import { useFocusTrap } from '../../hooks/useFocusTrap';
 import { Button } from './Button';
 
 interface ModalProps {
@@ -11,70 +13,17 @@ interface ModalProps {
   footer?: React.ReactNode;
 }
 
-const FOCUSABLE_SELECTOR =
-  'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
-
 export function Modal({ open, onClose, title, description, children, footer }: ModalProps) {
   const titleId = useId();
   const descId = useId();
   const dialogRef = useRef<HTMLDivElement | null>(null);
-  const previousFocusRef = useRef<HTMLElement | null>(null);
 
-  useEffect(() => {
-    if (!open) return;
-
-    previousFocusRef.current = document.activeElement as HTMLElement | null;
-
-    const focusTimer = window.setTimeout(() => {
-      const container = dialogRef.current;
-      if (!container) return;
-      const focusables = container.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR);
-      if (focusables.length > 0) {
-        focusables[0].focus();
-      } else {
-        container.focus();
-      }
-    }, 0);
-
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        onClose();
-        return;
-      }
-      if (e.key === 'Tab') {
-        const container = dialogRef.current;
-        if (!container) return;
-        const focusables = Array.from(
-          container.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR),
-        ).filter((el) => el.offsetParent !== null || el === document.activeElement);
-        if (focusables.length === 0) {
-          e.preventDefault();
-          container.focus();
-          return;
-        }
-        const first = focusables[0];
-        const last = focusables[focusables.length - 1];
-        if (e.shiftKey) {
-          if (document.activeElement === first || !container.contains(document.activeElement)) {
-            e.preventDefault();
-            last.focus();
-          }
-        } else if (document.activeElement === last || !container.contains(document.activeElement)) {
-          e.preventDefault();
-          first.focus();
-        }
-      }
-    };
-
-    window.addEventListener('keydown', onKeyDown);
-    return () => {
-      window.clearTimeout(focusTimer);
-      window.removeEventListener('keydown', onKeyDown);
-      if (previousFocusRef.current && document.body.contains(previousFocusRef.current)) {
-        previousFocusRef.current.focus();
-      }
-    };
-  }, [open, onClose]);
+  useFocusTrap({
+    active: open,
+    containerRef: dialogRef,
+    onEscape: onClose,
+    restoreFocus: true,
+  });
 
   if (!open) return null;
 

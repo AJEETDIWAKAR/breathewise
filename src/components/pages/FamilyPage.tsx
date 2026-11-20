@@ -1,5 +1,6 @@
-import React, { useEffect, useRef, useState } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { ArrowRight, Check } from 'lucide-react';
+import { useAutoClearState } from '../../hooks/useAutoClearTimer';
 import { useAppState } from '../../state/AppStateContext';
 import { validateFamilyProfile, type FamilyProfile } from '../../types/breathewise';
 import { parseBoundedInt } from '../../utils/number';
@@ -13,8 +14,7 @@ export function FamilyPage() {
   const [draft, setDraft] = useState<FamilyProfile>(familyProfile);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [householdError, setHouseholdError] = useState<string | null>(null);
-  const [savedBanner, setSavedBanner] = useState(false);
-  const savedTimerRef = useRef<number | null>(null);
+  const [savedBanner, showSavedBanner, clearSavedBanner] = useAutoClearState(false, 4000);
 
   useEffect(() => {
     setDraft(familyProfile);
@@ -22,15 +22,7 @@ export function FamilyPage() {
     setErrorMsg(null);
   }, [familyProfile]);
 
-  useEffect(() => {
-    return () => {
-      if (savedTimerRef.current !== null) {
-        window.clearTimeout(savedTimerRef.current);
-      }
-    };
-  }, []);
-
-  const handleSave = (e: React.FormEvent) => {
+  const handleSave = (e: FormEvent) => {
     e.preventDefault();
     const trimmedName = draft.householdName.trim();
     const cleanedDraft: FamilyProfile = {
@@ -45,18 +37,14 @@ export function FamilyPage() {
           : null,
       );
       setErrorMsg(parsed.message);
-      setSavedBanner(false);
+      clearSavedBanner();
       return;
     }
     setDraft(parsed.data);
     setHouseholdError(null);
     setErrorMsg(null);
     updateFamilyProfile(parsed.data);
-    setSavedBanner(true);
-    if (savedTimerRef.current !== null) {
-      window.clearTimeout(savedTimerRef.current);
-    }
-    savedTimerRef.current = window.setTimeout(() => setSavedBanner(false), 4000);
+    showSavedBanner(true);
   };
 
   return (

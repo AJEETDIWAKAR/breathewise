@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { CheckSquare, ShieldAlert, Square } from 'lucide-react';
 import {
   INDOOR_EVIDENCE_BOUNDARIES,

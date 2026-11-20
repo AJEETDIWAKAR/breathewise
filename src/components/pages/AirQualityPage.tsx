@@ -1,6 +1,7 @@
-import React, { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { ExternalLink, LocateFixed, MapPin, Search } from 'lucide-react';
 import { getUsAqiVisualTokens, US_AQI_SCALE_GUIDE } from '../../domain/usAqi';
+import { useDeviceGeolocation } from '../../hooks/useDeviceGeolocation';
 import { searchLocationsApi } from '../../services/airQualityApi';
 import { useAppState } from '../../state/AppStateContext';
 import type { LocationOption } from '../../types/breathewise';
@@ -38,10 +39,28 @@ export function AirQualityPage() {
   const [showCoordsEntry, setShowCoordsEntry] = useState(false);
   const [manualLat, setManualLat] = useState('');
   const [manualLon, setManualLon] = useState('');
-  const [coordLoading, setCoordLoading] = useState(false);
+  const [manualCoordLoading, setManualCoordLoading] = useState(false);
 
   const searchAbortRef = useRef<AbortController | null>(null);
   const mountedRef = useRef(true);
+
+  const {
+    loading: geoLoading,
+    error: geoError,
+    clearError: clearGeoError,
+    requestLocation: handleUseDeviceLocation,
+  } = useDeviceGeolocation({
+    onResolveCoordinates: selectLocationByCoordinates,
+    unavailableMessage:
+      'Browser geolocation is unavailable here. Search by city name or enter coordinates manually.',
+    deniedMessage:
+      'Location permission denied or timed out. Search manually or enter coordinates instead.',
+    notFoundFallbackMessage: 'No supported AirLive location found within 200 km of your position.',
+    onSuccess: () => setSearchResults([]),
+  });
+
+  const coordLoading = geoLoading || manualCoordLoading;
+  const displayedError = searchError ?? geoError;
 
   useEffect(() => {
     mountedRef.current = true;
@@ -51,8 +70,9 @@ export function AirQualityPage() {
     };
   }, []);
 
-  const handleSearch = async (e: React.FormEvent) => {
+  const handleSearch = async (e: FormEvent) => {
     e.preventDefault();
+    clearGeoError();
     const trimmed = searchTerm.trim();
     if (trimmed.length < 2) {
       setSearchError('Enter at least 2 characters to search supported AirLive locations.');
@@ -90,49 +110,19 @@ export function AirQualityPage() {
     setSearchResults([]);
     setSearchTerm('');
     setSearchError(null);
+    clearGeoError();
   };
 
-  const handleUseDeviceLocation = () => {
-    if (typeof navigator === 'undefined' || !navigator.geolocation) {
-      setSearchError('Browser geolocation is unavailable here. Search by city name or enter coordinates manually.');
-      return;
-    }
-    setCoordLoading(true);
-    setSearchError(null);
-    navigator.geolocation.getCurrentPosition(
-      async (pos) => {
-        try {
-          await selectLocationByCoordinates(pos.coords.latitude, pos.coords.longitude);
-          if (mountedRef.current) setSearchResults([]);
-        } catch (err) {
-          if (!mountedRef.current) return;
-          setSearchError(
-            err instanceof Error
-              ? err.message
-              : 'No supported AirLive location found within 200 km of your position.',
-          );
-        } finally {
-          if (mountedRef.current) setCoordLoading(false);
-        }
-      },
-      () => {
-        if (!mountedRef.current) return;
-        setCoordLoading(false);
-        setSearchError('Location permission denied or timed out. Search manually or enter coordinates instead.');
-      },
-      { enableHighAccuracy: false, timeout: 10_000, maximumAge: 300_000 },
-    );
-  };
-
-  const handleCoordinateLookup = async (e: React.FormEvent) => {
+  const handleCoordinateLookup = async (e: FormEvent) => {
     e.preventDefault();
+    clearGeoError();
     const lat = Number(manualLat.trim());
     const lon = Number(manualLon.trim());
     if (!Number.isFinite(lat) || lat < -90 || lat > 90 || !Number.isFinite(lon) || lon < -180 || lon > 180) {
       setSearchError('Enter valid coordinates: latitude (-90 to 90) and longitude (-180 to 180).');
       return;
     }
-    setCoordLoading(true);
+    setManualCoordLoading(true);
     setSearchError(null);
     try {
       await selectLocationByCoordinates(lat, lon);
@@ -148,7 +138,7 @@ export function AirQualityPage() {
           : 'No supported AirLive monitoring location found within 200 km of those coordinates.',
       );
     } finally {
-      if (mountedRef.current) setCoordLoading(false);
+      if (mountedRef.current) setManualCoordLoading(false);
     }
   };
 
@@ -244,9 +234,9 @@ export function AirQualityPage() {
           Privacy: Location inputs or optional browser geolocation are used solely to find the nearest AirLive monitoring station and modeled hourly trend.
         </p>
 
-        {searchError && (
+        {displayedError && (
           <p className="mt-2 text-xs text-red-700" role="alert">
-            {searchError}
+            {displayedError}
           </p>
         )}
 
@@ -289,6 +279,7 @@ export function AirQualityPage() {
         dataState !== 'loading' &&
         !(dataState === 'live' && liveStatus === 'loading') && (
           <EmptyState
+            headingLevel="h2"
             title="No active AirLive telemetry loaded"
             description="Live AirLive feeds are currently unavailable or paused. Retry the live API check or inspect the labeled preview fixture."
             actionLabel="Retry live API"

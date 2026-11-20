@@ -5,6 +5,7 @@ import { loadServerConfig, type ServerConfig } from './config/env.ts';
 import { AirliveProvider } from './providers/airliveProvider.ts';
 import { OpenMeteoProvider } from './providers/openMeteoProvider.ts';
 import { createRateLimiter } from './middleware/rateLimiter.ts';
+import { AppError, errorHandlerMiddleware } from './middleware/errorHandler.ts';
 import { AirQualityService } from './services/airQualityService.ts';
 import {
   buildMinimizedFamilyContext,
@@ -13,7 +14,7 @@ import {
 } from './services/aiAdvisorFallback.ts';
 import { GeminiAssistantService, type GeminiContentClient } from './services/geminiService.ts';
 import { TtlCache } from './utils/cache.ts';
-import { redactSensitiveText } from './utils/logger.ts';
+import { logError, logWarn, redactSensitiveText } from './utils/logger.ts';
 import { buildAirLiveNormalizedReading, evaluateStaleness } from './utils/normalizeReading.ts';
 
 function makeConfig(overrides: Partial<ServerConfig> = {}): ServerConfig {
@@ -1428,5 +1429,127 @@ describe('Express API Endpoints (AirLive + Gemini)', () => {
       familyProfile: SAMPLE_FAMILY_PROFILE,
     });
     expect(geminiCalls).toBe(2);
+  });
+
+  it('enforces config bounds, sanitizes unhandled errors, prunes rate-limiter buckets, redacts logs, and maps AirLive schema/503 errors', async () => {
+    // 1. loadServerConfig placeholder rejection & minimum 5-minute cache floor
+    const origEnv = { ...process.env };
+    try {
+      process.env.GEMINI_API_KEY = 'MY_GEMINI_API_KEY';
+      process.env.AQI_CACHE_TTL_MS = '60000';
+      process.env.ALLOWED_ORIGINS = 'https://app.example.com/, invalid-origin, http://localhost:4173';
+      const cfg = loadServerConfig();
+      expect(cfg.geminiApiKey).toBeNull();
+      expect(cfg.aqiCacheTtlMs).toBe(300_000);
+      expect(cfg.allowedOrigins).toEqual(['https://app.example.com', 'http://localhost:4173']);
+
+      process.env.GEMINI_API_KEY = 'YOUR_REAL_KEY_HERE';
+      expect(loadServerConfig().geminiApiKey).toBeNull();
+    } finally {
+      process.env = origEnv;
+    }
+
+    // 2. errorHandlerMiddleware handles AppError, malformed JSON SyntaxError, and generic Error without leaking stack/secrets
+    const createResCapture = () => {
+      let statusCode = 200;
+      let body: unknown = null;
+      return {
+        status(code: number) {
+          statusCode = code;
+          return this;
+        },
+        json(payload: unknown) {
+          body = payload;
+          return this;
+        },
+        getStatus: () => statusCode,
+        getBody: () => body,
+      };
+    };
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const appErrRes = createResCapture();
+      errorHandlerMiddleware(
+        new AppError(422, 'VALIDATION_ERROR', 'Bad key=secretValue input', false, { field: 'slug' }),
+        {} as Parameters<typeof errorHandlerMiddleware>[1],
+        appErrRes as unknown as Parameters<typeof errorHandlerMiddleware>[2],
+        (() => {}) as Parameters<typeof errorHandlerMiddleware>[3],
+      );
+      expect(appErrRes.getStatus()).toBe(422);
+      expect(JSON.stringify(appErrRes.getBody())).toContain('[REDACTED]');
+      expect(JSON.stringify(appErrRes.getBody())).not.toContain('secretValue');
+
+      const syntaxErr = Object.assign(new SyntaxError('Unexpected token'), { body: '{bad' });
+      const syntaxRes = createResCapture();
+      errorHandlerMiddleware(
+        syntaxErr,
+        {} as Parameters<typeof errorHandlerMiddleware>[1],
+        syntaxRes as unknown as Parameters<typeof errorHandlerMiddleware>[2],
+        (() => {}) as Parameters<typeof errorHandlerMiddleware>[3],
+      );
+      expect(syntaxRes.getStatus()).toBe(400);
+      expect((syntaxRes.getBody() as { error: { code: string } }).error.code).toBe('VALIDATION_ERROR');
+
+      const genericRes = createResCapture();
+      errorHandlerMiddleware(
+        new Error('DB failed with Authorization: Bearer supersecrettoken123'),
+        {} as Parameters<typeof errorHandlerMiddleware>[1],
+        genericRes as unknown as Parameters<typeof errorHandlerMiddleware>[2],
+        (() => {}) as Parameters<typeof errorHandlerMiddleware>[3],
+      );
+      expect(genericRes.getStatus()).toBe(500);
+      expect((genericRes.getBody() as { error: { code: string; message: string } }).error.code).toBe(
+        'INTERNAL_ERROR',
+      );
+      expect(JSON.stringify(genericRes.getBody())).not.toContain('supersecrettoken123');
+      expect(errSpy).toHaveBeenCalled();
+      expect(errSpy.mock.calls[0]?.[0]).not.toContain('supersecrettoken123');
+
+      logWarn('TestScope', 'Testing apiKey=topsecret123', { token: 'Bearer abcdef12345' });
+      expect(warnSpy).toHaveBeenCalled();
+      expect(warnSpy.mock.calls[0]?.[0]).not.toContain('topsecret123');
+      expect(warnSpy.mock.calls[0]?.[0]).not.toContain('abcdef12345');
+
+      logError('TestScope', 'Plain error', 'token=secretval');
+      expect(errSpy.mock.calls[1]?.[0]).not.toContain('secretval');
+    } finally {
+      warnSpy.mockRestore();
+      errSpy.mockRestore();
+    }
+
+    // 3. createRateLimiter prunes stale/excess IP buckets when >1000 distinct IPs arrive
+    const boundedLimiter = createRateLimiter({ windowMs: 60_000, maxRequests: 5, name: 'BurstCheck' });
+    const noopRes = { setHeader: () => {} } as unknown as Parameters<typeof boundedLimiter>[1];
+    for (let i = 0; i <= 1005; i += 1) {
+      boundedLimiter(
+        { ip: `10.0.${Math.floor(i / 255)}.${i % 255}`, socket: {} } as Parameters<
+          typeof boundedLimiter
+        >[0],
+        noopRes,
+        () => {},
+      );
+    }
+
+    // 4. AirliveProvider maps invalid ranking schema to 502 and persistent 503 upstream failure cleanly
+    const airProvider = new AirliveProvider(5000);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify({ wrong: 'shape' }), { status: 200 })),
+    );
+    await expect(airProvider.fetchRanking()).rejects.toMatchObject({
+      statusCode: 502,
+      code: 'INVALID_PROVIDER_RESPONSE',
+    });
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('Service Unavailable', { status: 503 })),
+    );
+    await expect(airProvider.fetchAllPlaces()).rejects.toMatchObject({
+      statusCode: 503,
+      code: 'AQI_PROVIDER_UNAVAILABLE',
+    });
   });
 });

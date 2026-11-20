@@ -1,4 +1,3 @@
-import React from 'react';
 import {
   AlertTriangle,
   CheckCircle2,
@@ -227,6 +226,7 @@ export function AqiIndicator({ reading, preferredUnit = 'aqi' }: AqiIndicatorPro
           aria-valuenow={reading.aqi.value ?? undefined}
           aria-valuemin={0}
           aria-valuemax={500}
+          aria-valuetext={`${isUsAqi ? 'US AQI' : 'CPCB NAQI'} ${reading.aqi.value ?? 'unavailable'}, ${reading.aqi.category}`}
           aria-label={`${isUsAqi ? 'US AQI' : 'CPCB NAQI'} ${reading.aqi.value ?? 'unavailable'} out of 500, category ${reading.aqi.category}`}
         >
           <div

@@ -1,4 +1,4 @@
-import React, { useId } from 'react';
+import { useId } from 'react';
 
 export interface SelectOption<T extends string = string> {
   value: T;

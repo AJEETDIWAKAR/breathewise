@@ -10,7 +10,25 @@ import {
   findBestVentilationWindow,
   generateTailoredIndoorGuide,
 } from './indoorRules';
-import { calculatePollutantSubIndex, computeOverallNaqi, getNaqiCategory } from './naqi';
+import {
+  calculatePollutantSubIndex,
+  computeOverallNaqi,
+  getNaqiCategory,
+  getNaqiVisualTokens,
+} from './naqi';
+import {
+  buildAirLiveReading,
+  evaluateStaleness,
+  filterAndSortLocationSearch,
+  haversineKm,
+  isWithinIndiaBounds,
+  mapAirLivePlaceSummary,
+  mapPlaceToLocationOption,
+  resolveNearestOrMatchingPlace,
+  sanitizeHttpUrl,
+  sliceOpenMeteoWindow,
+  toUtcIso,
+} from './airliveNormalize';
 import { generateDailyPlan, getFamilySafetySummary } from './plannerRules';
 import { getPersonalizedSustainableAlternatives } from './sustainableRules';
 import {
@@ -21,10 +39,19 @@ import {
 } from './usAqi';
 import {
   DEFAULT_FAMILY_PROFILE,
+  DEFAULT_SETTINGS,
   PRESET_LOCATIONS,
   getPreviewFixtureForecast,
   getPreviewFixtureReading,
 } from '../data/previewFixtures';
+import { parseBoundedInt, isSafeHttpUrl } from '../utils/number';
+import {
+  STORAGE_KEYS,
+  clearAllAppStorage,
+  loadFromStorage,
+  loadInitialPersistedState,
+  saveToStorage,
+} from '../state/storagePersistence';
 import type { AirQualityReading } from '../types/breathewise';
 
 describe('US AQI 6-Band Mapping Engine (AirLive Standard)', () => {
@@ -423,4 +450,185 @@ describe('Different Household Configurations & Missing AQI Handling', () => {
     expect(highRiskSustainable.some((item) => item.area === 'energy')).toBe(true);
   });
 });
+
+describe('Shared AirLive Normalization, Geo, & Open-Meteo Helpers', () => {
+  it('sanitizes URLs against XSS schemes and computes accurate Haversine distances', () => {
+    expect(sanitizeHttpUrl('https://airlive.tracsa.co.in/place/delhi')).toBe(
+      'https://airlive.tracsa.co.in/place/delhi',
+    );
+    expect(sanitizeHttpUrl('http://localhost:3000/test')).toBe('http://localhost:3000/test');
+    expect(sanitizeHttpUrl('javascript:alert(1)')).toBeUndefined();
+    expect(sanitizeHttpUrl('data:text/html,<script>alert(1)</script>')).toBeUndefined();
+    expect(sanitizeHttpUrl('not a valid url')).toBeUndefined();
+    expect(sanitizeHttpUrl(null)).toBeUndefined();
+
+    // Delhi to Mumbai ~ 1,148 km
+    const dist = haversineKm(28.6139, 77.209, 19.076, 72.8777);
+    expect(dist).toBeGreaterThan(1100);
+    expect(dist).toBeLessThan(1200);
+  });
+
+  it('evaluates fresh, stale, missing, and unparseable observation timestamps cleanly', () => {
+    const fresh = evaluateStaleness(new Date(Date.now() - 10 * 60 * 1000).toISOString());
+    expect(fresh).toEqual({ isStale: false, freshnessStatus: 'fresh' });
+
+    const stale = evaluateStaleness(new Date(Date.now() - 5 * 60 * 60 * 1000).toISOString());
+    expect(stale.isStale).toBe(true);
+    expect(stale.freshnessStatus).toBe('stale');
+    expect(stale.staleReason).toMatch(/hour\(s\) old/i);
+
+    const missing = evaluateStaleness(null);
+    expect(missing.freshnessStatus).toBe('unavailable');
+    expect(missing.isStale).toBe(true);
+
+    const invalid = evaluateStaleness('not-an-iso-timestamp');
+    expect(invalid.freshnessStatus).toBe('unavailable');
+    expect(invalid.staleReason).toMatch(/could not be verified/i);
+  });
+
+  it('normalizes ground-station and atmospheric-model AirLive readings safely', () => {
+    const nowIso = new Date().toISOString();
+    const groundSummary = mapAirLivePlaceSummary({
+      slug: 'delhi',
+      name: 'Delhi',
+      country: 'IN',
+      countryName: 'India',
+      lat: 28.61,
+      lon: 77.21,
+      usAqi: 210,
+      pm25: 160.24,
+      source: 'ground stations',
+      stationsUsed: 4,
+      updated: nowIso,
+      url: 'javascript:alert(1)',
+    });
+    expect(groundSummary.measurementType).toBe('ground_station');
+    expect(groundSummary.url).toBeUndefined();
+    expect(groundSummary.freshnessStatus).toBe('fresh');
+
+    const modelReading = buildAirLiveReading({
+      slug: 'rural-grid',
+      name: 'Rural Grid',
+      lat: 26.8,
+      lon: 80.9,
+      usAqi: 135,
+      pm25: 49.5,
+      source: 'atmospheric model',
+      updated: nowIso,
+    });
+    expect(modelReading.provenance.measurementType).toBe('modeled_forecast');
+    expect(modelReading.provenance.stationsUsed).toBeNull();
+    expect(modelReading.provenance.coverageLimitations).toMatch(/not a direct local ground-station/i);
+  });
+
+  it('filters/sorts search matches prioritizing India + prefix matches and resolves nearest station within 200km', () => {
+    const samplePlaces = [
+      { slug: 'new-york', name: 'New York', country: 'US', countryName: 'United States', kind: 'city', lat: 40.71, lon: -74.0 },
+      { slug: 'new-delhi', name: 'New Delhi', country: 'IN', countryName: 'India', kind: 'city', lat: 28.6139, lon: 77.209 },
+      { slug: 'noida', name: 'Noida', country: 'IN', countryName: 'India', kind: 'city', lat: 28.5355, lon: 77.391 },
+      { slug: 'india', name: 'India', country: 'IN', countryName: 'India', kind: 'country', lat: 21.0, lon: 78.0 },
+    ];
+
+    expect(filterAndSortLocationSearch(samplePlaces, '  ', 10)).toEqual([]);
+    const searchRes = filterAndSortLocationSearch(samplePlaces, 'new', 10);
+    expect(searchRes.map((p) => p.slug)).toEqual(['new-delhi', 'new-york']);
+
+    const mappedOption = mapPlaceToLocationOption(samplePlaces[1]);
+    expect(mappedOption.state).toBe('India');
+
+    // Direct city match
+    expect(resolveNearestOrMatchingPlace(samplePlaces, { city: 'noida' })?.slug).toBe('noida');
+    // Coordinate fallback skips kind='country' and selects nearest station
+    const nearest = resolveNearestOrMatchingPlace(samplePlaces, { lat: 28.54, lon: 77.38 });
+    expect(nearest?.slug).toBe('noida');
+    expect(nearest?.distanceKm).toBeLessThan(5);
+    // Coordinate >200km from any station returns null
+    expect(resolveNearestOrMatchingPlace(samplePlaces, { lat: 0, lon: 0 })).toBeNull();
+  });
+
+  it('slices Open-Meteo hourly forecast windows around current time cleanly', () => {
+    expect(isWithinIndiaBounds(28.6, 77.2)).toBe(true);
+    expect(isWithinIndiaBounds(51.5, -0.1)).toBe(false);
+    expect(toUtcIso('2026-11-20T10:00')).toBe('2026-11-20T10:00:00.000Z');
+    expect(toUtcIso('2026-11-20T10:00:00Z')).toBe('2026-11-20T10:00:00.000Z');
+
+    const nowMs = Date.now();
+    const times = Array.from({ length: 10 }, (_, idx) => {
+      const d = new Date(nowMs + (idx - 5) * 3600_000);
+      return d.toISOString().slice(0, 16);
+    });
+    const pm25 = times.map((_, i) => (i === 0 ? null : 45 + i * 5));
+    const pm10 = times.map((_, i) => 80 + i * 5);
+
+    const sliced = sliceOpenMeteoWindow(times, pm25, pm10, 28.61, 77.2, 6);
+    expect(sliced.length).toBeLessThanOrEqual(6);
+    expect(sliced.every((pt) => typeof pt.estimatedNaqi === 'number' && pt.scale === 'US_AQI')).toBe(
+      true,
+    );
+    expect(sliceOpenMeteoWindow([], [], [], 28.61, 77.2)).toEqual([]);
+  });
+});
+
+describe('NAQI Visual Tokens, Number Utils, & Local Storage Persistence', () => {
+  it('computes NAQI across all 7 pollutants, gaps, out-of-range concentrations, and visual tokens', () => {
+    expect(calculatePollutantSubIndex('pm25', -5)).toBe(0);
+    expect(calculatePollutantSubIndex('pm25', Number.NaN)).toBe(0);
+    expect(calculatePollutantSubIndex('pm25', 9999)).toBe(500);
+    // Fractional gap between discrete breakpoints (60 < 60.5 < 61)
+    expect(calculatePollutantSubIndex('pm25', 60.5)).toBe(101);
+    expect(calculatePollutantSubIndex('o3', 150)).toBeGreaterThan(100);
+    expect(calculatePollutantSubIndex('co', 1.5)).toBeGreaterThan(50);
+    expect(calculatePollutantSubIndex('so2', 60)).toBeGreaterThan(50);
+    expect(calculatePollutantSubIndex('nh3', 300)).toBeGreaterThan(50);
+
+    expect(getNaqiCategory(40)).toBe('Good');
+    expect(getNaqiCategory(80)).toBe('Satisfactory');
+    expect(getNaqiCategory(150)).toBe('Moderately Polluted');
+    expect(getNaqiCategory(250)).toBe('Poor');
+    expect(computeOverallNaqi({}).dominantPollutant).toBe('UNKNOWN');
+
+    for (const cat of [
+      'Good',
+      'Satisfactory',
+      'Moderately Polluted',
+      'Poor',
+      'Very Poor',
+      'Severe',
+      'Unavailable',
+    ] as const) {
+      const tokens = getNaqiVisualTokens(cat);
+      expect(tokens.category).toBe(cat);
+      expect(tokens.healthSummary.length).toBeGreaterThan(10);
+    }
+  });
+
+  it('bounds parsed integers and validates HTTP URLs safely', () => {
+    expect(parseBoundedInt('abc', 10, 100, 42)).toBe(42);
+    expect(parseBoundedInt('5', 10, 100, 42)).toBe(10);
+    expect(parseBoundedInt('500', 10, 100, 42)).toBe(100);
+    expect(parseBoundedInt('55', 10, 100, 42)).toBe(55);
+    expect(isSafeHttpUrl('https://airlive.tracsa.co.in')).toBe(true);
+    expect(isSafeHttpUrl('javascript:void(0)')).toBe(false);
+  });
+
+  it('recovers gracefully from corrupt localStorage JSON and restores defaults on clear', () => {
+    window.localStorage.clear();
+    window.localStorage.setItem(STORAGE_KEYS.profile, '{corrupt-json');
+    expect(loadFromStorage(STORAGE_KEYS.settings, () => null, { a: 1 })).toEqual({ a: 1 });
+
+    saveToStorage(STORAGE_KEYS.completedPlanner, ['morning']);
+    const loaded = loadInitialPersistedState({
+      location: PRESET_LOCATIONS[0],
+      settings: DEFAULT_SETTINGS,
+      profile: DEFAULT_FAMILY_PROFILE,
+      impactLogs: [],
+    });
+    expect(loaded.completedPlannerIds).toEqual(['morning']);
+    expect(loaded.familyProfile.householdName).toBe(DEFAULT_FAMILY_PROFILE.householdName);
+
+    clearAllAppStorage();
+    expect(window.localStorage.getItem(STORAGE_KEYS.completedPlanner)).toBeNull();
+  });
+});
+
 

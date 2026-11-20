@@ -1,4 +1,3 @@
-import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { ApiClientError, fetchLiveCurrentAirQuality, sendAiChatMessage } from '../services/airQualityApi';

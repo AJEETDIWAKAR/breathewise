@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   AlertTriangle,
   Bot,
@@ -229,6 +229,7 @@ export function AssistantPage() {
     <div className="space-y-6">
       {chatError && (
         <ErrorMessage
+          headingLevel="h2"
           title="Assistant request failed"
           message={chatError}
           onRetry={
@@ -243,6 +244,7 @@ export function AssistantPage() {
 
       {isOffline && (
         <UnavailableNotice
+          headingLevel="h2"
           title="You appear to be offline"
           message="Sending new AI assistant questions requires an active connection to the BreatheWise server."
         />
@@ -250,6 +252,7 @@ export function AssistantPage() {
 
       {!currentReading && !isOffline && (
         <UnavailableNotice
+          headingLevel="h2"
           title="Live AirLive telemetry unavailable for selected location"
           message="You can still ask protective questions—the assistant will report that live AQI data is currently unavailable instead of inventing numbers."
         />
@@ -456,7 +459,7 @@ export function AssistantPage() {
                                   href={src.url}
                                   target="_blank"
                                   rel="noopener noreferrer"
-                                  className="inline-flex items-center gap-1 text-teal-800 hover:underline font-sans font-medium"
+                                  className="min-h-6 px-1 rounded inline-flex items-center gap-1 text-teal-800 hover:underline font-sans font-medium"
                                 >
                                   <span>{src.name}</span>
                                   <ExternalLink className="w-3 h-3" aria-hidden="true" />
@@ -569,7 +572,7 @@ export function AssistantPage() {
               href="https://airlive.tracsa.co.in"
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 text-teal-800 hover:underline pt-1 font-medium"
+              className="min-h-6 px-1 rounded inline-flex items-center gap-1 text-teal-800 hover:underline font-medium"
             >
               <span>Data by AirLive</span>
               <ExternalLink className="w-3 h-3" aria-hidden="true" />

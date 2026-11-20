@@ -1,4 +1,4 @@
-import React from 'react';
+import type React from 'react';
 import { AlertCircle, AlertTriangle, CloudOff, RefreshCw } from 'lucide-react';
 import { Button } from './Button';
 
@@ -30,6 +30,7 @@ interface ErrorMessageProps {
   message: string;
   onRetry?: () => void;
   secondaryAction?: React.ReactNode;
+  headingLevel?: 'h2' | 'h3';
 }
 
 export function ErrorMessage({
@@ -37,7 +38,9 @@ export function ErrorMessage({
   message,
   onRetry,
   secondaryAction,
+  headingLevel = 'h3',
 }: ErrorMessageProps) {
+  const Heading = headingLevel;
   return (
     <div
       role="alert"
@@ -45,7 +48,7 @@ export function ErrorMessage({
     >
       <AlertCircle className="w-5 h-5 text-red-700 shrink-0 mt-0.5" aria-hidden="true" />
       <div className="flex-1 min-w-0 space-y-2">
-        <h3 className="text-sm font-semibold text-red-900">{title}</h3>
+        <Heading className="text-sm font-semibold text-red-900">{title}</Heading>
         <p className="text-sm text-red-800">{message}</p>
         {(onRetry || secondaryAction) && (
           <div className="flex flex-wrap items-center gap-2 pt-1">
@@ -68,6 +71,7 @@ interface UnavailableNoticeProps {
   message: string;
   primaryAction?: React.ReactNode;
   secondaryAction?: React.ReactNode;
+  headingLevel?: 'h2' | 'h3';
 }
 
 export function UnavailableNotice({
@@ -75,7 +79,9 @@ export function UnavailableNotice({
   message,
   primaryAction,
   secondaryAction,
+  headingLevel = 'h3',
 }: UnavailableNoticeProps) {
+  const Heading = headingLevel;
   return (
     <div
       role="status"
@@ -83,7 +89,7 @@ export function UnavailableNotice({
     >
       <CloudOff className="w-5 h-5 text-amber-800 shrink-0 mt-0.5" aria-hidden="true" />
       <div className="flex-1 min-w-0 space-y-2">
-        <h3 className="text-sm font-semibold text-amber-950">{title}</h3>
+        <Heading className="text-sm font-semibold text-amber-950">{title}</Heading>
         <p className="text-sm text-amber-900">{message}</p>
         {(primaryAction || secondaryAction) && (
           <div className="flex flex-wrap items-center gap-2 pt-1">
@@ -102,6 +108,7 @@ interface EmptyStateProps {
   actionLabel?: string;
   onAction?: () => void;
   icon?: React.ReactNode;
+  headingLevel?: 'h2' | 'h3';
 }
 
 export function EmptyState({
@@ -110,14 +117,16 @@ export function EmptyState({
   actionLabel,
   onAction,
   icon,
+  headingLevel = 'h3',
 }: EmptyStateProps) {
+  const Heading = headingLevel;
   return (
     <div className="bg-white border border-slate-200 rounded-lg p-8 text-center space-y-3">
       <div className="mx-auto w-10 h-10 rounded-md bg-slate-100 text-slate-600 flex items-center justify-center">
         {icon ?? <AlertTriangle className="w-5 h-5" aria-hidden="true" />}
       </div>
       <div className="space-y-1 max-w-md mx-auto">
-        <h3 className="text-base font-semibold text-slate-900">{title}</h3>
+        <Heading className="text-base font-semibold text-slate-900">{title}</Heading>
         <p className="text-sm text-slate-600">{description}</p>
       </div>
       {actionLabel && onAction && (

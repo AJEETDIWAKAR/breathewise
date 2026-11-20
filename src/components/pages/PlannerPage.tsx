@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import {
   AlertCircle,
   Check,
@@ -16,6 +16,7 @@ import {
   getFamilySafetySummary,
   getPlannerConditionTier,
 } from '../../domain/plannerRules';
+import { useAutoClearState } from '../../hooks/useAutoClearTimer';
 import { useAppState } from '../../state/AppStateContext';
 import { Button } from '../ui/Button';
 import { Card, CardHeader } from '../ui/Card';
@@ -60,17 +61,8 @@ export function PlannerPage() {
   const hasHourlyCurve = hourlyForecast.length >= 2;
   const scaleLabel = currentReading?.aqi.scale === 'INDIA_CPCB_NAQI' ? 'NAQI' : 'US AQI';
 
-  const [advisoryCopied, setAdvisoryCopied] = useState(false);
+  const [advisoryCopied, triggerAdvisoryCopied, clearAdvisoryCopied] = useAutoClearState(false, 3000);
   const [advisoryPreview, setAdvisoryPreview] = useState<string | null>(null);
-  const copyTimerRef = useRef<number | null>(null);
-
-  useEffect(() => {
-    return () => {
-      if (copyTimerRef.current !== null) {
-        window.clearTimeout(copyTimerRef.current);
-      }
-    };
-  }, []);
 
   const buildAdvisoryText = () => {
     const locName = currentReading?.location.name ?? location.name;
@@ -95,20 +87,16 @@ export function PlannerPage() {
     try {
       if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
         await navigator.clipboard.writeText(text);
-        setAdvisoryCopied(true);
+        triggerAdvisoryCopied(true);
         setAdvisoryPreview(null);
       } else {
-        setAdvisoryCopied(false);
+        clearAdvisoryCopied();
         setAdvisoryPreview(text);
       }
     } catch {
-      setAdvisoryCopied(false);
+      clearAdvisoryCopied();
       setAdvisoryPreview(text);
     }
-    if (copyTimerRef.current !== null) {
-      window.clearTimeout(copyTimerRef.current);
-    }
-    copyTimerRef.current = window.setTimeout(() => setAdvisoryCopied(false), 3000);
   };
 
   return (

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { BookOpen, CalendarDays, Pencil, PlusCircle, Trash2 } from 'lucide-react';
 import {
   calculateTransportShiftImpact,
@@ -11,10 +11,10 @@ import { useAppState } from '../../state/AppStateContext';
 import type { ImpactLogEntry } from '../../types/breathewise';
 import { createEntryId } from '../../utils/id';
 import { parseBoundedInt } from '../../utils/number';
+import { EditImpactModal, MethodologyModal } from '../impact/ImpactModals';
 import { Button } from '../ui/Button';
 import { Card, CardHeader } from '../ui/Card';
 import { Input } from '../ui/Input';
-import { Modal } from '../ui/Modal';
 import { Selector } from '../ui/Selector';
 import { EmptyState } from '../ui/States';
 
@@ -90,7 +90,7 @@ export function ImpactPage() {
   const dailyHistory = summarizeImpactByDate(impactLogs);
   const previewCalc = calculateTransportShiftImpact(baselineMode, chosenMode, distanceKm);
 
-  const handleLogShift = (e: React.FormEvent) => {
+  const handleLogShift = (e: FormEvent) => {
     e.preventDefault();
     if (distanceKm <= 0) return;
 
@@ -110,7 +110,7 @@ export function ImpactPage() {
     });
   };
 
-  const handleLogHabit = (e: React.FormEvent) => {
+  const handleLogHabit = (e: FormEvent) => {
     e.preventDefault();
     const trimmed = habitTitle.trim();
     if (!trimmed) {
@@ -153,7 +153,7 @@ export function ImpactPage() {
     setEditError(null);
   };
 
-  const handleSaveEdit = (e: React.FormEvent) => {
+  const handleSaveEdit = (e: FormEvent) => {
     e.preventDefault();
     if (!editingEntry) return;
     const trimmedTitle = editTitle.trim();
@@ -478,7 +478,7 @@ export function ImpactPage() {
                         type="button"
                         onClick={() => openEditModal(entry)}
                         aria-label={`Edit logged action ${entry.title}`}
-                        className="p-2 text-slate-600 hover:text-teal-700 hover:bg-slate-100 rounded cursor-pointer"
+                        className="min-w-8 min-h-8 inline-flex items-center justify-center p-2 text-slate-600 hover:text-teal-700 hover:bg-slate-100 rounded cursor-pointer"
                       >
                         <Pencil className="w-4 h-4" aria-hidden="true" />
                       </button>
@@ -486,7 +486,7 @@ export function ImpactPage() {
                         type="button"
                         onClick={() => removeImpactLog(entry.id)}
                         aria-label={`Delete logged action ${entry.title}`}
-                        className="p-2 text-slate-600 hover:text-red-700 hover:bg-red-50 rounded cursor-pointer"
+                        className="min-w-8 min-h-8 inline-flex items-center justify-center p-2 text-slate-600 hover:text-red-700 hover:bg-red-50 rounded cursor-pointer"
                       >
                         <Trash2 className="w-4 h-4" aria-hidden="true" />
                       </button>
@@ -499,127 +499,29 @@ export function ImpactPage() {
         )}
       </Card>
 
-      {/* Edit Action Modal */}
-      <Modal
-        open={editingEntry !== null}
+      <EditImpactModal
+        editingEntry={editingEntry}
         onClose={() => setEditingEntry(null)}
-        title="Edit Logged Action"
-        description={
-          editingEntry?.category === 'transport_shift'
-            ? 'Updating mode or distance automatically recalculates CO2e and fuel displaced.'
-            : 'Update title, date, or recorded assumptions.'
-        }
-        footer={
-          <>
-            <Button variant="secondary" size="sm" onClick={() => setEditingEntry(null)}>
-              Cancel
-            </Button>
-            <Button type="submit" form="edit-impact-form" variant="primary" size="sm">
-              Save changes
-            </Button>
-          </>
-        }
-      >
-        {editingEntry && (
-          <form id="edit-impact-form" onSubmit={handleSaveEdit} className="space-y-4" noValidate>
-            <Input
-              label="Action title"
-              value={editTitle}
-              errorText={editError ?? undefined}
-              onChange={(e) => {
-                setEditTitle(e.target.value);
-                if (editError) setEditError(null);
-              }}
-              maxLength={140}
-              required
-            />
-            <Input
-              label="Date"
-              type="date"
-              value={editDate}
-              onChange={(e) => setEditDate(e.target.value)}
-              required
-            />
+        onSubmit={handleSaveEdit}
+        editTitle={editTitle}
+        onChangeTitle={(value) => {
+          setEditTitle(value);
+          if (editError) setEditError(null);
+        }}
+        editDate={editDate}
+        onChangeDate={setEditDate}
+        editBaselineMode={editBaselineMode}
+        onChangeBaselineMode={setEditBaselineMode}
+        editChosenMode={editChosenMode}
+        onChangeChosenMode={setEditChosenMode}
+        editDistanceKm={editDistanceKm}
+        onChangeDistanceKm={setEditDistanceKm}
+        editAssumptions={editAssumptions}
+        onChangeAssumptions={setEditAssumptions}
+        editError={editError}
+      />
 
-            {editingEntry.category === 'transport_shift' && (
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <Selector
-                  label="Baseline vehicle"
-                  value={editBaselineMode}
-                  onChange={setEditBaselineMode}
-                  options={[
-                    { value: 'petrol_car', label: 'Petrol Car' },
-                    { value: 'diesel_car', label: 'Diesel Car' },
-                    { value: 'two_wheeler', label: 'Two-Wheeler' },
-                  ]}
-                />
-                <Selector
-                  label="Chosen mode"
-                  value={editChosenMode}
-                  onChange={setEditChosenMode}
-                  options={[
-                    { value: 'metro_rail', label: 'Metro Rail' },
-                    { value: 'public_bus', label: 'Public Bus' },
-                    { value: 'carpool', label: 'Carpool' },
-                    { value: 'walk_cycle', label: 'Walk / Cycle' },
-                    { value: 'work_from_home', label: 'Work from Home' },
-                  ]}
-                />
-                <Input
-                  label="Distance (km)"
-                  type="number"
-                  min={1}
-                  max={500}
-                  value={editDistanceKm}
-                  onChange={(e) => setEditDistanceKm(parseBoundedInt(e.target.value, 1, 500, 1))}
-                />
-              </div>
-            )}
-
-            <Input
-              label="Assumptions / notes"
-              value={editAssumptions}
-              onChange={(e) => setEditAssumptions(e.target.value)}
-              maxLength={400}
-            />
-          </form>
-        )}
-      </Modal>
-
-      {/* Methodology Modal */}
-      <Modal
-        open={methodologyOpen}
-        onClose={() => setMethodologyOpen(false)}
-        title="Transparent Calculation Methodology"
-        description="Documented emission factors & strict attribution boundaries"
-        footer={
-          <Button variant="primary" size="sm" onClick={() => setMethodologyOpen(false)}>
-            Close
-          </Button>
-        }
-      >
-        <div className="space-y-3 text-sm">
-          <p>
-            Transport emission factors use urban India passenger-km midpoint estimates (India GHG
-            Program / Shakti Sustainable Energy Foundation):
-          </p>
-          <ul className="list-disc pl-5 space-y-1 font-mono text-xs text-slate-700">
-            <li>Petrol Car: 140 g CO2e/pkm (assumed 14 km/L fuel economy)</li>
-            <li>Diesel Car: 135 g CO2e/pkm (assumed 16 km/L fuel economy)</li>
-            <li>Two-Wheeler: 50 g CO2e/pkm (assumed 45 km/L fuel economy)</li>
-            <li>3-Person Carpool: 47 g CO2e/pkm</li>
-            <li>Public City Bus: 40 g CO2e/pkm</li>
-            <li>Metro / Urban Electric Rail: 35 g CO2e/pkm</li>
-            <li>Walk / Cycle / Work from Home: 0 g CO2e/pkm direct tailpipe</li>
-          </ul>
-          <p>
-            <strong>Three Separate Pillars:</strong> Avoided tailpipe emissions (Pillar A),
-            pollution exposure-management habits (Pillar B: <strong>0 g CO2e claimed</strong>), and
-            household sustainability actions (Pillar C) are never blended together or reported as
-            a measured reduction in city-wide AQI.
-          </p>
-        </div>
-      </Modal>
+      <MethodologyModal open={methodologyOpen} onClose={() => setMethodologyOpen(false)} />
     </div>
   );
 }

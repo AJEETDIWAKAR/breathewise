@@ -1,4 +1,3 @@
-import React from 'react';
 import { ArrowRight, ShieldCheck, Sprout } from 'lucide-react';
 import type { RecommendationItem } from '../../types/breathewise';
 
@@ -34,7 +33,7 @@ export function RecommendationPanel({ items, onAction }: RecommendationPanelProp
               <button
                 type="button"
                 onClick={() => onAction(item)}
-                className="p-2 text-slate-600 hover:text-teal-700 hover:bg-slate-100 rounded-md transition-colors shrink-0 cursor-pointer"
+                className="min-w-8 min-h-8 inline-flex items-center justify-center p-2 text-slate-600 hover:text-teal-700 hover:bg-slate-100 rounded-md transition-colors shrink-0 cursor-pointer"
                 aria-label={`Open details for ${item.title}`}
               >
                 <ArrowRight className="w-4 h-4" aria-hidden="true" />
