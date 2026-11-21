@@ -1,8 +1,10 @@
 import { execFile } from 'node:child_process';
+import http from 'node:http';
 import { promisify } from 'node:util';
 import type { AddressInfo } from 'net';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createApiApp } from './app.ts';
+import vercelHandler, { normalizeVercelApiUrl } from './vercelEntry.ts';
 import { loadServerConfig, type ServerConfig } from './config/env.ts';
 import { AirliveProvider } from './providers/airliveProvider.ts';
 import { OpenMeteoProvider } from './providers/openMeteoProvider.ts';
@@ -1588,6 +1590,7 @@ describe('Express API Endpoints (AirLive + Gemini)', () => {
       statusCode: 503,
       code: 'AQI_PROVIDER_UNAVAILABLE',
     });
+    vi.unstubAllGlobals();
 
     // 5. Native Node ESM loader (npm start -> node server.ts) must resolve full server graph without ERR_MODULE_NOT_FOUND
     const execFileAsync = promisify(execFile);
@@ -1596,5 +1599,28 @@ describe('Express API Endpoints (AirLive + Gemini)', () => {
       "import('./server/app.ts').then(() => console.log('NODE_ESM_OK'))",
     ]);
     expect(stdout.trim()).toBe('NODE_ESM_OK');
+
+    // 6. Vercel serverless entrypoint restores rewritten __bw_path URLs and serves /api/health
+    expect(normalizeVercelApiUrl('/api/index.mjs?__bw_path=ai/chat')).toBe('/api/ai/chat');
+    expect(
+      normalizeVercelApiUrl('/api/index.mjs?__bw_path=air-quality/current&slug=delhi'),
+    ).toBe('/api/air-quality/current?slug=delhi');
+    expect(normalizeVercelApiUrl('/api/health')).toBe('/api/health');
+
+    const vercelSrv = http.createServer(vercelHandler);
+    await new Promise<void>((resolve) => vercelSrv.listen(0, '127.0.0.1', () => resolve()));
+    try {
+      const addr = vercelSrv.address() as AddressInfo;
+      const healthRes = await fetch(
+        `http://127.0.0.1:${addr.port}/api/index.mjs?__bw_path=health`,
+      );
+      expect(healthRes.status).toBe(200);
+      const healthJson = (await healthRes.json()) as { status: string };
+      expect(healthJson.status).toBe('ok');
+    } finally {
+      await new Promise<void>((resolve, reject) =>
+        vercelSrv.close((err) => (err ? reject(err) : resolve())),
+      );
+    }
   });
 });
