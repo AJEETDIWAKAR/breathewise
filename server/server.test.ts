@@ -1293,6 +1293,41 @@ describe('Express API Endpoints (AirLive + Gemini)', () => {
     const blockedJson = (await blockedPost.json()) as { error: { code: string } };
     expect(blockedJson.error.code).toBe('CORS_ORIGIN_FORBIDDEN');
 
+    const mismatchedProtoPost = await fetch(`${baseUrl}/api/ai/chat`, {
+      method: 'POST',
+      headers: {
+        Origin: 'http://ais-pre.example.run.app',
+        'X-Forwarded-Host': 'ais-pre.example.run.app',
+        'X-Forwarded-Proto': 'https',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        message: 'Check Delhi',
+        slug: 'delhi',
+        familyProfile: SAMPLE_FAMILY_PROFILE,
+      }),
+    });
+    expect(mismatchedProtoPost.status).toBe(403);
+
+    const sameHostProxyPost = await fetch(`${baseUrl}/api/ai/chat`, {
+      method: 'POST',
+      headers: {
+        Origin: 'https://ais-pre.example.run.app',
+        'X-Forwarded-Host': 'ais-pre.example.run.app',
+        'X-Forwarded-Proto': 'https',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        message: 'Check Delhi',
+        slug: 'delhi',
+        familyProfile: SAMPLE_FAMILY_PROFILE,
+      }),
+    });
+    expect(sameHostProxyPost.status).toBe(200);
+    expect(sameHostProxyPost.headers.get('access-control-allow-origin')).toBe(
+      'https://ais-pre.example.run.app',
+    );
+
     const realFetch = globalThis.fetch;
     const nowIso = new Date().toISOString();
     const bigItems = Array.from({ length: 25 }, (_, i) => ({

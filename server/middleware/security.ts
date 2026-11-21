@@ -1,5 +1,31 @@
 import type { NextFunction, Request, Response } from 'express';
 
+function isSameHostOrigin(origin: string, req: Request): boolean {
+  try {
+    const originUrl = new URL(origin);
+    if (originUrl.protocol !== 'http:' && originUrl.protocol !== 'https:') {
+      return false;
+    }
+    const rawHost =
+      (typeof req.headers['x-forwarded-host'] === 'string'
+        ? req.headers['x-forwarded-host'].split(',')[0]
+        : req.headers.host) ?? '';
+    const requestHost = rawHost.trim().toLowerCase();
+    if (!requestHost) return false;
+
+    const rawProto =
+      typeof req.headers['x-forwarded-proto'] === 'string'
+        ? req.headers['x-forwarded-proto'].split(',')[0].trim().toLowerCase()
+        : req.secure
+          ? 'https'
+          : 'http';
+
+    return originUrl.host.toLowerCase() === requestHost && originUrl.protocol === `${rawProto}:`;
+  } catch {
+    return false;
+  }
+}
+
 export function securityHeadersMiddleware(appUrl: string, extraAllowedOrigins: string[] = []) {
   const allowedOrigins = new Set<string>([
     'http://localhost:3000',
@@ -18,7 +44,7 @@ export function securityHeadersMiddleware(appUrl: string, extraAllowedOrigins: s
     const origin = req.headers.origin;
     res.setHeader('Vary', 'Origin');
 
-    const isAllowedOrigin = !origin || allowedOrigins.has(origin);
+    const isAllowedOrigin = !origin || allowedOrigins.has(origin) || isSameHostOrigin(origin, req);
     if (origin && isAllowedOrigin) {
       res.setHeader('Access-Control-Allow-Origin', origin);
       res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');

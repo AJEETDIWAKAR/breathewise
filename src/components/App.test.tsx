@@ -909,6 +909,20 @@ describe('BreatheWise AirLive + Gemini UI Integration', () => {
       name: 'ApiClientError',
       code: 'BACKEND_API_UNAVAILABLE',
     });
+
+    // AssistantPage shows clean server-unavailable alert + explicit rule-based guidance button
+    const nav = screen.getByRole('navigation', { name: /Main navigation/i });
+    fireEvent.click(within(nav).getByRole('button', { name: 'AI Assistant' }));
+    const askInput = await screen.findByLabelText(/Ask an air quality question/i);
+    fireEvent.change(askInput, { target: { value: 'Is it safe to jog outside today?' } });
+    fireEvent.click(screen.getByRole('button', { name: /^Send$/i }));
+
+    expect(await screen.findByText(/AI server endpoint unavailable/i)).toBeInTheDocument();
+    expect(screen.queryByText(/npm start/i)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /Show rule-based guidance \(No AI\)/i }));
+    expect(await screen.findByText(/Rule-Based Fallback \(AI Unavailable\)/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/US AQI 215/i).length).toBeGreaterThanOrEqual(1);
   });
 });
 

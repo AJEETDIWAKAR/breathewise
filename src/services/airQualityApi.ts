@@ -308,7 +308,7 @@ export async function sendAiChatMessage(
     if (err instanceof ApiClientError && err.code === 'BACKEND_API_UNAVAILABLE') {
       throw new ApiClientError(
         'BACKEND_API_UNAVAILABLE',
-        'BreatheWise AI Assistant requires the Node/Express server ("npm start") for server-side Gemini calls. Live air-quality readings and deterministic household tools remain active.',
+        'The AI Assistant backend service is unavailable on this host. Live AirLive readings and deterministic household tools remain active.',
         false,
       );
     }
