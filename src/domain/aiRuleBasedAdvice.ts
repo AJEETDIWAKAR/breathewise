@@ -1,4 +1,4 @@
-import { sanitizeHttpUrl } from './airliveNormalize';
+import { sanitizeHttpUrl } from './airliveNormalize.ts';
 import type {
   AiFallbackReasonCode,
   AiStructuredAdvice,
@@ -7,7 +7,7 @@ import type {
   FreshnessStatus,
   MeasurementType,
   PollutantKey,
-} from '../types/breathewise';
+} from '../types/breathewise.ts';
 
 export type QuestionTopic =
   | 'outdoor_exercise'

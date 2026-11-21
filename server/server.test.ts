@@ -1,3 +1,5 @@
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import type { AddressInfo } from 'net';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createApiApp } from './app.ts';
@@ -1586,5 +1588,13 @@ describe('Express API Endpoints (AirLive + Gemini)', () => {
       statusCode: 503,
       code: 'AQI_PROVIDER_UNAVAILABLE',
     });
+
+    // 5. Native Node ESM loader (npm start -> node server.ts) must resolve full server graph without ERR_MODULE_NOT_FOUND
+    const execFileAsync = promisify(execFile);
+    const { stdout } = await execFileAsync(process.execPath, [
+      '-e',
+      "import('./server/app.ts').then(() => console.log('NODE_ESM_OK'))",
+    ]);
+    expect(stdout.trim()).toBe('NODE_ESM_OK');
   });
 });
