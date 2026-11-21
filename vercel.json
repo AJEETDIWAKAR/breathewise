@@ -4,7 +4,7 @@
   "outputDirectory": "dist",
   "rewrites": [
     {
-      "source": "/api/(?!index\\.mjs)(.*)",
+      "source": "/api/(.*)",
       "destination": "/api/index.mjs?__bw_path=$1"
     },
     {
