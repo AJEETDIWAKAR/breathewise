@@ -23,12 +23,19 @@ const AIRLIVE_FALLBACK_CACHE_TTL_MS = 10 * 60 * 1000;
 export class ApiClientError extends Error {
   readonly code: string;
   readonly retryable: boolean;
+  readonly details?: Record<string, unknown>;
 
-  constructor(code: string, message: string, retryable = true) {
+  constructor(
+    code: string,
+    message: string,
+    retryable = true,
+    details?: Record<string, unknown>,
+  ) {
     super(message);
     this.name = 'ApiClientError';
     this.code = code;
     this.retryable = retryable;
+    this.details = details;
   }
 }
 

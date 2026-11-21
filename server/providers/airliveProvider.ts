@@ -2,9 +2,9 @@ import {
   AIRLIVE_BASE_URL,
   AIRLIVE_DEFAULT_ATTRIBUTION,
   mapAirLivePlaceSummary,
+  sanitizeHttpUrl,
 } from '../../src/domain/airliveNormalize.ts';
 import { AppError } from '../middleware/errorHandler.ts';
-import { sanitizeHttpUrl } from '../utils/geo.ts';
 import { fetchJsonWithRetry, UpstreamHttpError } from '../utils/httpClient.ts';
 import { buildAirLiveNormalizedReading } from '../utils/normalizeReading.ts';
 import {
@@ -51,6 +51,7 @@ export class AirliveProvider implements AirQualityProvider {
         'AQI_PROVIDER_UNAVAILABLE',
         `AirLive API is currently unavailable (HTTP ${err.status}). Please try again shortly.`,
         true,
+        { upstreamStatus: err.status },
       );
     }
     return new AppError(

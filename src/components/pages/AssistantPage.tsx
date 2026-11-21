@@ -167,6 +167,15 @@ export function AssistantPage() {
     setSending(true);
 
     try {
+      const liveAirLiveFallback =
+        currentReading &&
+        currentReading.provenance.providerId === 'airlive' &&
+        (currentReading.provenance.measurementType === 'ground_station' ||
+          currentReading.provenance.measurementType === 'modeled_forecast') &&
+        (currentReading.location.slug ?? currentReading.location.id) === location.slug
+          ? currentReading
+          : undefined;
+
       const result = await sendAiChatMessage(
         {
           message: trimmed,
@@ -176,6 +185,7 @@ export function AssistantPage() {
           lon: location.lon,
           history: historyPayload,
           familyProfile,
+          ...(liveAirLiveFallback ? { clientReading: liveAirLiveFallback } : {}),
         },
         { signal: controller.signal },
       );

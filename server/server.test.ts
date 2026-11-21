@@ -1589,6 +1589,17 @@ describe('Express API Endpoints (AirLive + Gemini)', () => {
     await expect(airProvider.fetchAllPlaces()).rejects.toMatchObject({
       statusCode: 503,
       code: 'AQI_PROVIDER_UNAVAILABLE',
+      details: { upstreamStatus: 503 },
+    });
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('Forbidden', { status: 403 })),
+    );
+    await expect(airProvider.fetchPlaceBySlug('delhi')).rejects.toMatchObject({
+      statusCode: 503,
+      code: 'AQI_PROVIDER_UNAVAILABLE',
+      details: { upstreamStatus: 403 },
     });
     vi.unstubAllGlobals();
 
@@ -1621,6 +1632,232 @@ describe('Express API Endpoints (AirLive + Gemini)', () => {
       await new Promise<void>((resolve, reject) =>
         vercelSrv.close((err) => (err ? reject(err) : resolve())),
       );
+    }
+  });
+
+  it('uses validated browser clientReading only when server AirLive is blocked (403) and rejects preview_fixture clientReading', async () => {
+    let airliveBlocked = true;
+    let capturedPrompt = '';
+    const freshIso = new Date().toISOString();
+
+    const realFetch = globalThis.fetch.bind(globalThis);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === 'string' ? input : input.toString();
+        if (url.startsWith('https://airlive.tracsa.co.in')) {
+          if (airliveBlocked) {
+            return new Response('Forbidden', { status: 403 });
+          }
+          return new Response(
+            JSON.stringify({
+              slug: 'delhi',
+              name: 'Delhi',
+              kind: 'city',
+              country: 'IN',
+              countryName: 'India',
+              lat: 28.6139,
+              lon: 77.209,
+              usAqi: 199,
+              category: 'Unhealthy',
+              pm25: 120,
+              source: 'station',
+              stationsUsed: 40,
+              updated: freshIso,
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } },
+          );
+        }
+        return realFetch(input, init);
+      }),
+    );
+
+    const mockGemini: GeminiContentClient = {
+      async generateStructuredJson({ contents }) {
+        capturedPrompt = contents;
+        return JSON.stringify({
+          summary: 'Grounded in live AirLive telemetry.',
+          recommendations: [
+            {
+              title: 'Reduce outdoor exposure',
+              action: 'Wear an N95 mask outdoors.',
+              outcomeCategory: 'reduce_personal_exposure',
+              outcomeLabel: 'Reduces Personal Exposure',
+              estimatedCostOrBudgetNote: 'Low cost',
+            },
+          ],
+          explanation: 'High PM2.5 affects sensitive groups.',
+          precautions: ['Keep rescue inhaler accessible.'],
+          confidenceAndLimitations: {
+            confidenceLevel: 'high',
+            notes: 'Grounded in ground stations.',
+          },
+        });
+      },
+    };
+
+    const customServer = await startTestServer(makeConfig(), mockGemini);
+    const { baseUrl } = customServer;
+    try {
+      const validClientReading = {
+        location: {
+          id: 'delhi',
+          slug: 'delhi',
+          name: 'Delhi',
+          city: 'Delhi',
+          country: 'IN',
+          countryName: 'India',
+          lat: 28.6139,
+          lon: 77.209,
+        },
+        aqi: {
+          value: 173,
+          scale: 'US_AQI' as const,
+          category: 'Unhealthy',
+          dominantPollutant: 'pm25',
+        },
+        pollutants: [
+          {
+            key: 'pm25' as const,
+            label: 'PM2.5',
+            value: 96,
+            unit: 'µg/m³' as const,
+            subIndex: 173,
+            safeReference: 'WHO 24h: 15 µg/m³',
+            status: 'measured' as const,
+          },
+        ],
+        missingPollutants: ['pm10', 'no2'],
+        provenance: {
+          providerId: 'airlive' as const,
+          providerName: 'AirLive',
+          stationName: 'Delhi',
+          measurementType: 'ground_station' as const,
+          sourceLabel: 'Ground Stations',
+          stationsUsed: 41,
+          observedAt: freshIso,
+          fetchedAt: freshIso,
+          isStale: false,
+          freshnessStatus: 'fresh' as const,
+          spatialResolution: 'City aggregation',
+          attribution: 'Data by AirLive.',
+          attributionUrl: 'https://airlive.tracsa.co.in',
+          coverageLimitations: 'Only US AQI & PM2.5 available.',
+        },
+      };
+
+      const profile = {
+        version: 1 as const,
+        householdName: 'Sharma',
+        members: { adults: 2, children: 1, seniors: 0 },
+        sensitivities: {
+          hasAsthmaOrRespiratory: false,
+          hasHeartCondition: false,
+          hasPregnantMember: false,
+          hasOutdoorWorker: false,
+        },
+        lifestyle: {
+          primaryCommute: 'metro_rail' as const,
+          dailyCommuteKm: 12,
+          preferredOutdoorActivity: 'walking' as const,
+          outdoorExerciseTime: 'early_morning' as const,
+          workSchedule: 'morning_evening_commute' as const,
+          schoolSchedule: 'morning_afternoon' as const,
+        },
+        homeEnvironment: {
+          budgetTier: 'low' as const,
+          cookingFuel: 'lpg' as const,
+          hasAirPurifier: false,
+          roomAreaSqFt: 180,
+          housingType: 'apartment_sealed' as const,
+          kitchenExhaust: 'window_only' as const,
+        },
+        updatedAt: freshIso,
+      };
+
+      // 1. Server AirLive 403 -> uses validated clientReading (US AQI 173)
+      const fallbackRes = await fetch(`${baseUrl}/api/ai/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: 'Is it safe to jog?',
+          slug: 'delhi',
+          history: [],
+          familyProfile: profile,
+          clientReading: validClientReading,
+        }),
+      });
+      expect(fallbackRes.status).toBe(200);
+      const fallbackJson = (await fallbackRes.json()) as {
+        liveDataAvailable: boolean;
+        groundedReading: { usAqi: number } | null;
+      };
+      expect(fallbackJson.liveDataAvailable).toBe(true);
+      expect(fallbackJson.groundedReading?.usAqi).toBe(173);
+      expect(capturedPrompt).toContain('US AQI: 173');
+
+      // 2. Rejects preview_fixture in clientReading (400 VALIDATION_ERROR)
+      const invalidFixtureRes = await fetch(`${baseUrl}/api/ai/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: 'Is it safe to jog?',
+          slug: 'delhi',
+          history: [],
+          familyProfile: profile,
+          clientReading: {
+            ...validClientReading,
+            provenance: {
+              ...validClientReading.provenance,
+              measurementType: 'preview_fixture',
+            },
+          },
+        }),
+      });
+      expect(invalidFixtureRes.status).toBe(400);
+
+      // 3. Mismatched slug in clientReading is ignored when server AirLive fails
+      const mismatchRes = await fetch(`${baseUrl}/api/ai/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: 'How is Mumbai AQI?',
+          slug: 'mumbai',
+          history: [],
+          familyProfile: profile,
+          clientReading: validClientReading,
+        }),
+      });
+      expect(mismatchRes.status).toBe(200);
+      const mismatchJson = (await mismatchRes.json()) as {
+        liveDataAvailable: boolean;
+        groundedReading: { usAqi: number } | null;
+      };
+      expect(mismatchJson.liveDataAvailable).toBe(false);
+      expect(mismatchJson.groundedReading).toBeNull();
+
+      // 4. When server AirLive succeeds, server telemetry overrides clientReading (199 vs 173)
+      airliveBlocked = false;
+      const serverFirstRes = await fetch(`${baseUrl}/api/ai/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: 'Current reading check?',
+          slug: 'delhi',
+          history: [],
+          familyProfile: profile,
+          clientReading: validClientReading,
+        }),
+      });
+      expect(serverFirstRes.status).toBe(200);
+      const serverFirstJson = (await serverFirstRes.json()) as {
+        liveDataAvailable: boolean;
+        groundedReading: { usAqi: number } | null;
+      };
+      expect(serverFirstJson.liveDataAvailable).toBe(true);
+      expect(serverFirstJson.groundedReading?.usAqi).toBe(199);
+    } finally {
+      await customServer.close();
     }
   });
 });

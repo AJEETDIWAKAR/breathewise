@@ -28,7 +28,16 @@ async function parseApiResponse<T>(res: Response): Promise<T> {
   if (!res.ok) {
     const errObj =
       json && typeof json === 'object' && 'error' in json
-        ? (json as { error?: { code?: string; message?: string; retryable?: boolean } }).error
+        ? (
+            json as {
+              error?: {
+                code?: string;
+                message?: string;
+                retryable?: boolean;
+                details?: Record<string, unknown>;
+              };
+            }
+          ).error
         : undefined;
     if (!errObj && res.status === 404) {
       throw new ApiClientError(
@@ -41,6 +50,7 @@ async function parseApiResponse<T>(res: Response): Promise<T> {
       errObj?.code ?? `HTTP_${res.status}`,
       errObj?.message ?? `Server returned HTTP ${res.status}`,
       errObj?.retryable ?? true,
+      errObj?.details,
     );
   }
   if (json === null || typeof json !== 'object') {
@@ -51,6 +61,17 @@ async function parseApiResponse<T>(res: Response): Promise<T> {
     );
   }
   return json as T;
+}
+
+function shouldFallbackToDirectAirLive(err: unknown): boolean {
+  if (!(err instanceof ApiClientError)) return false;
+  if (err.code === 'BACKEND_API_UNAVAILABLE') return true;
+  if (err.code === 'AQI_PROVIDER_UNAVAILABLE') {
+    const upstreamStatus = err.details?.upstreamStatus;
+    if (upstreamStatus === 401 || upstreamStatus === 403) return true;
+    if (/\(HTTP 40[13]\)/i.test(err.message)) return true;
+  }
+  return false;
 }
 
 export async function fetchAirLivePlaces(
@@ -67,7 +88,7 @@ export async function fetchAirLivePlaces(
     );
     return await parseApiResponse(res);
   } catch (err) {
-    if (err instanceof ApiClientError && err.code === 'BACKEND_API_UNAVAILABLE') {
+    if (shouldFallbackToDirectAirLive(err)) {
       return fetchDirectAirLivePlacesByCountry(country, options);
     }
     throw err;
@@ -100,7 +121,7 @@ export async function fetchLiveCurrentAirQuality(
     );
     data = await parseApiResponse<AirQualityReading>(res);
   } catch (err) {
-    if (err instanceof ApiClientError && err.code === 'BACKEND_API_UNAVAILABLE') {
+    if (shouldFallbackToDirectAirLive(err)) {
       return fetchDirectAirLiveCurrent(location, options);
     }
     throw err;
@@ -145,7 +166,7 @@ export async function fetchIndiaRanking(
     );
     return await parseApiResponse(res);
   } catch (err) {
-    if (err instanceof ApiClientError && err.code === 'BACKEND_API_UNAVAILABLE') {
+    if (shouldFallbackToDirectAirLive(err)) {
       return fetchDirectAirLiveRanking(order, limit, options);
     }
     throw err;
@@ -181,7 +202,7 @@ export async function fetchLiveHistoryAirQuality(
     );
     data = await parseApiResponse(res);
   } catch (err) {
-    if (err instanceof ApiClientError && err.code === 'BACKEND_API_UNAVAILABLE') {
+    if (shouldFallbackToDirectAirLive(err)) {
       return fetchDirectOpenMeteoHistory(location, options);
     }
     throw err;
@@ -245,7 +266,7 @@ export async function searchLocationsApi(
       lon: loc.lon,
     }));
   } catch (err) {
-    if (err instanceof ApiClientError && err.code === 'BACKEND_API_UNAVAILABLE') {
+    if (shouldFallbackToDirectAirLive(err)) {
       return searchDirectAirLiveLocations(query, options);
     }
     throw err;
@@ -289,6 +310,7 @@ export async function sendAiChatMessage(
     lon?: number;
     history: Array<{ role: 'user' | 'assistant'; text: string }>;
     familyProfile: FamilyProfile;
+    clientReading?: AirQualityReading;
   },
   options?: ApiRequestOptions,
 ): Promise<AiChatResult> {

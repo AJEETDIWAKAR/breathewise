@@ -23,6 +23,7 @@ export class AiController {
         lon: body.lon,
         history: body.history,
         familyProfile: body.familyProfile,
+        clientReading: body.clientReading,
       });
       res.json(result);
     } catch (err) {

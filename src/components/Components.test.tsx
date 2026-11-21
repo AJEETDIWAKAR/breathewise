@@ -762,4 +762,131 @@ describe('UI Components, Accessibility Focus Traps, Client API Fallback, & Page 
       expect(screen.queryByRole('dialog', { name: /Edit Logged Action/i })).toBeNull();
     });
   });
+
+  it('falls back to direct AirLive CORS API when server returns 503 (HTTP 403), keeps non-403 503 errors strict, and fails honestly if direct AirLive also fails', async () => {
+    clearDirectFallbackCaches();
+    const freshIso = new Date().toISOString();
+    let directAirLiveBlocked = false;
+    let serverUpstreamStatus = 403;
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = typeof input === 'string' ? input : input.toString();
+        if (url.startsWith('/api/air-quality/')) {
+          return new Response(
+            JSON.stringify({
+              error: {
+                code: 'AQI_PROVIDER_UNAVAILABLE',
+                message: `AirLive API is currently unavailable (HTTP ${serverUpstreamStatus}). Please try again shortly.`,
+                retryable: true,
+                details: { upstreamStatus: serverUpstreamStatus },
+              },
+            }),
+            { status: 503, headers: { 'Content-Type': 'application/json' } },
+          );
+        }
+        if (directAirLiveBlocked && url.startsWith('https://airlive.tracsa.co.in')) {
+          return new Response('Forbidden', { status: 403 });
+        }
+        if (url === 'https://airlive.tracsa.co.in/api/v1/aqi') {
+          return new Response(
+            JSON.stringify({
+              updated: freshIso,
+              items: [
+                {
+                  slug: 'delhi',
+                  name: 'Delhi',
+                  kind: 'city',
+                  country: 'IN',
+                  countryName: 'India',
+                  lat: 28.61,
+                  lon: 77.2,
+                  usAqi: 173,
+                  category: 'Unhealthy',
+                  pm25: 96,
+                  source: 'station',
+                  stationsUsed: 41,
+                  updated: freshIso,
+                },
+              ],
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } },
+          );
+        }
+        if (url === 'https://airlive.tracsa.co.in/api/v1/aqi/delhi') {
+          return new Response(
+            JSON.stringify({
+              slug: 'delhi',
+              name: 'Delhi',
+              kind: 'city',
+              country: 'IN',
+              countryName: 'India',
+              lat: 28.61,
+              lon: 77.2,
+              usAqi: 173,
+              category: 'Unhealthy',
+              pm25: 96,
+              source: 'station',
+              stationsUsed: 41,
+              updated: freshIso,
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } },
+          );
+        }
+        if (url.startsWith('https://airlive.tracsa.co.in/api/v1/ranking')) {
+          return new Response(
+            JSON.stringify({
+              updated: freshIso,
+              items: [
+                {
+                  slug: 'delhi',
+                  name: 'Delhi',
+                  kind: 'city',
+                  country: 'IN',
+                  countryName: 'India',
+                  lat: 28.61,
+                  lon: 77.2,
+                  usAqi: 173,
+                  category: 'Unhealthy',
+                  pm25: 96,
+                  source: 'station',
+                  stationsUsed: 41,
+                  updated: freshIso,
+                  rank: 1,
+                },
+              ],
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } },
+          );
+        }
+        return new Response('Not mocked', { status: 404 });
+      }),
+    );
+
+    // 1. Server returns 503 (HTTP 403) -> seamlessly resolves from direct CORS AirLive
+    const current = await fetchLiveCurrentAirQuality(PRESET_LOCATIONS[0]);
+    expect(current.aqi.value).toBe(173);
+    const places = await fetchAirLivePlaces('IN');
+    expect(places.items[0]?.slug).toBe('delhi');
+    const ranking = await fetchIndiaRanking('worst', 10);
+    expect(ranking.items[0]?.slug).toBe('delhi');
+    const searched = await searchLocationsApi('del');
+    expect(searched[0]?.slug).toBe('delhi');
+
+    // 2. If server returns non-401/403 503 (e.g. HTTP 500), do NOT mask server failure with fallback
+    clearDirectFallbackCaches();
+    serverUpstreamStatus = 500;
+    await expect(fetchLiveCurrentAirQuality(PRESET_LOCATIONS[0])).rejects.toMatchObject({
+      code: 'AQI_PROVIDER_UNAVAILABLE',
+      details: { upstreamStatus: 500 },
+    });
+
+    // 3. If server returns 403 AND direct browser AirLive also fails, reject honestly
+    serverUpstreamStatus = 403;
+    directAirLiveBlocked = true;
+    await expect(fetchLiveCurrentAirQuality(PRESET_LOCATIONS[0])).rejects.toBeInstanceOf(
+      ApiClientError,
+    );
+  });
 });

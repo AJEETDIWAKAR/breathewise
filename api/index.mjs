@@ -174,7 +174,8 @@ var AiController = class {
           lat: body.lat,
           lon: body.lon,
           history: body.history,
-          familyProfile: body.familyProfile
+          familyProfile: body.familyProfile,
+          clientReading: body.clientReading
         });
         res.json(result);
       } catch (err) {
@@ -414,6 +415,56 @@ var recommendationsBodySchema = z2.object({
     message: "Provide a location slug, lat/lon coordinates, or a city name."
   }
 );
+var clientReadingPollutantSchema = z2.object({
+  key: z2.enum(["pm25", "pm10", "no2", "so2", "o3", "co"]),
+  label: z2.string().trim().min(1).max(32),
+  value: z2.number().min(0).max(5e3).nullable(),
+  unit: z2.enum(["\xB5g/m\xB3", "mg/m\xB3"]),
+  subIndex: z2.number().min(0).max(1e3).nullable(),
+  safeReference: z2.string().trim().min(1).max(120),
+  status: z2.enum(["measured", "unavailable"]).optional()
+});
+var clientReadingSchema = z2.object({
+  location: z2.object({
+    id: z2.string().trim().min(1).max(120),
+    slug: slugField.optional(),
+    name: z2.string().trim().min(1).max(120),
+    city: z2.string().trim().min(1).max(120),
+    state: z2.string().trim().max(120).optional(),
+    country: z2.string().trim().max(8).optional(),
+    countryName: z2.string().trim().max(120).optional(),
+    kind: z2.string().trim().max(32).optional(),
+    lat: z2.number().min(-90).max(90),
+    lon: z2.number().min(-180).max(180),
+    distanceKm: z2.number().min(0).max(500).optional()
+  }),
+  aqi: z2.object({
+    value: z2.number().min(0).max(1e3).nullable(),
+    scale: z2.enum(["US_AQI", "INDIA_CPCB_NAQI"]),
+    category: z2.string().trim().min(1).max(60),
+    dominantPollutant: z2.string().trim().min(1).max(40)
+  }),
+  pollutants: z2.array(clientReadingPollutantSchema).max(10),
+  missingPollutants: z2.array(z2.string().trim().max(32)).max(12).optional(),
+  provenance: z2.object({
+    providerId: z2.literal("airlive"),
+    providerName: z2.string().trim().min(1).max(60),
+    stationName: z2.string().trim().min(1).max(120),
+    measurementType: z2.enum(["ground_station", "modeled_forecast"]),
+    sourceLabel: z2.string().trim().min(1).max(120).optional(),
+    stationsUsed: z2.number().int().min(0).max(1e4).nullable().optional(),
+    observedAt: z2.string().trim().max(80).nullable(),
+    fetchedAt: z2.string().trim().min(1).max(80),
+    isStale: z2.boolean(),
+    freshnessStatus: z2.enum(["fresh", "stale", "unavailable"]).optional(),
+    staleReason: z2.string().trim().max(240).optional(),
+    spatialResolution: z2.string().trim().min(1).max(200),
+    attribution: z2.string().trim().min(1).max(300),
+    attributionUrl: z2.string().trim().max(300).optional(),
+    placeUrl: z2.string().trim().max(300).optional(),
+    coverageLimitations: z2.string().trim().max(500)
+  })
+});
 var aiChatBodySchema = z2.object({
   message: z2.string().trim().min(1, "Please enter a non-empty question for the assistant.").max(1e3, "Question cannot exceed 1000 characters."),
   slug: slugField.optional(),
@@ -426,7 +477,8 @@ var aiChatBodySchema = z2.object({
       text: z2.string().max(4e3)
     })
   ).max(12).optional().default([]),
-  familyProfile: FamilyProfileSchema
+  familyProfile: FamilyProfileSchema,
+  clientReading: clientReadingSchema.optional()
 });
 var airlivePlaceItemSchema = z2.object({
   slug: z2.string().min(1),
@@ -1263,6 +1315,8 @@ async function fetchJsonWithRetry(url, options) {
         method: "GET",
         headers: {
           Accept: "application/json",
+          "Accept-Language": "en-US,en;q=0.9",
+          "User-Agent": "Mozilla/5.0 (compatible; BreatheWise/1.0; +https://airlive.tracsa.co.in)",
           ...options.headers
         },
         signal: AbortSignal.timeout(timeoutMs)
@@ -1378,7 +1432,8 @@ var AirliveProvider = class {
         503,
         "AQI_PROVIDER_UNAVAILABLE",
         `AirLive API is currently unavailable (HTTP ${err.status}). Please try again shortly.`,
-        true
+        true,
+        { upstreamStatus: err.status }
       );
     }
     return new AppError(
@@ -2324,6 +2379,66 @@ function normalizeOutcomeLabel(outcome) {
       return "Reduces Personal Emissions";
   }
 }
+function normalizeClientReadingFallback(req) {
+  const client = req.clientReading;
+  if (!client) return null;
+  const clientSlug = (client.location.slug ?? client.location.id).trim().toLowerCase();
+  const reqSlug = req.slug?.trim().toLowerCase();
+  if (reqSlug && clientSlug && reqSlug !== clientSlug) {
+    return null;
+  }
+  const staleness = evaluateStaleness(client.provenance.observedAt);
+  const missingSet = new Set(
+    (client.missingPollutants ?? []).filter(
+      (k) => ["usAqi", "pm25", "pm10", "no2", "so2", "o3", "co"].includes(k)
+    )
+  );
+  return {
+    location: {
+      id: clientSlug || client.location.id,
+      slug: client.location.slug ?? clientSlug,
+      name: client.location.name,
+      city: client.location.city,
+      state: client.location.state,
+      country: client.location.country,
+      countryName: client.location.countryName,
+      kind: client.location.kind,
+      lat: client.location.lat,
+      lon: client.location.lon,
+      distanceKm: client.location.distanceKm
+    },
+    aqi: {
+      value: client.aqi.value,
+      scale: client.aqi.scale,
+      category: client.aqi.category,
+      dominantPollutant: client.aqi.dominantPollutant
+    },
+    pollutants: client.pollutants.map((p) => ({
+      ...p,
+      status: p.status ?? (p.value === null ? "unavailable" : "measured")
+    })),
+    missingPollutants: Array.from(missingSet),
+    provenance: {
+      providerId: "airlive",
+      providerName: client.provenance.providerName,
+      stationName: client.provenance.stationName,
+      measurementType: client.provenance.measurementType,
+      sourceLabel: client.provenance.sourceLabel ?? "AirLive Station",
+      stationsUsed: client.provenance.stationsUsed ?? null,
+      observedAt: client.provenance.observedAt,
+      fetchedAt: client.provenance.fetchedAt,
+      isStale: staleness.isStale,
+      freshnessStatus: staleness.freshnessStatus,
+      staleReason: staleness.staleReason,
+      spatialResolution: client.provenance.spatialResolution,
+      attribution: client.provenance.attribution,
+      attributionUrl: sanitizeHttpUrl(client.provenance.attributionUrl) ?? AIRLIVE_BASE_URL,
+      placeUrl: sanitizeHttpUrl(client.provenance.placeUrl),
+      coverageLimitations: client.provenance.coverageLimitations,
+      cacheHit: false
+    }
+  };
+}
 var GeminiAssistantService = class {
   constructor(config, airQualityService, customClient) {
     this.singleTurnCache = new TtlCache(5 * 60 * 1e3, 100);
@@ -2355,10 +2470,24 @@ var GeminiAssistantService = class {
         lon: req.lon
       });
     } catch (err) {
-      unavailableReason = err instanceof Error ? err.message : "Live AirLive reading could not be retrieved.";
-      logWarn("GeminiAssistantService", "Proceeding with unavailable live reading context", {
-        reason: unavailableReason
-      });
+      const serverErrMessage = err instanceof Error ? err.message : "Live AirLive reading could not be retrieved.";
+      const clientFallback = normalizeClientReadingFallback(req);
+      if (clientFallback) {
+        reading = clientFallback;
+        logWarn(
+          "GeminiAssistantService",
+          "Server AirLive fetch unavailable; using validated browser-fetched AirLive reading",
+          {
+            slug: clientFallback.location.slug ?? clientFallback.location.id,
+            reason: serverErrMessage
+          }
+        );
+      } else {
+        unavailableReason = serverErrMessage;
+        logWarn("GeminiAssistantService", "Proceeding with unavailable live reading context", {
+          reason: unavailableReason
+        });
+      }
     }
     const requestedLabel = req.slug || req.city || "selected location";
     const airContext = formatGroundedAirQualityContext(reading, unavailableReason, requestedLabel);

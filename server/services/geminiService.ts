@@ -1,13 +1,22 @@
 import { GoogleGenAI, ThinkingLevel, Type, type Schema } from '@google/genai';
+import type { z } from 'zod';
+import {
+  AIRLIVE_BASE_URL,
+  evaluateStaleness,
+  sanitizeHttpUrl,
+} from '../../src/domain/airliveNormalize.ts';
 import type {
   AiFallbackReasonCode,
   AiStructuredAdvice,
+  AqiCategory,
   FamilyProfile,
+  PollutantKey,
 } from '../../src/types/breathewise.ts';
 import type { ServerConfig } from '../config/env.ts';
 import type { NormalizedCurrentAirQuality } from '../providers/types.ts';
 import { TtlCache } from '../utils/cache.ts';
 import { logWarn } from '../utils/logger.ts';
+import type { clientReadingSchema } from '../validators/airQualityValidators.ts';
 import { AiStructuredAdviceSchema } from '../validators/breathewiseSchemas.ts';
 import type { AirQualityService } from './airQualityService.ts';
 import {
@@ -24,6 +33,8 @@ export interface AiChatTurn {
   text: string;
 }
 
+export type ClientAirQualityFallback = z.infer<typeof clientReadingSchema>;
+
 export interface AiChatRequest {
   message: string;
   slug?: string;
@@ -32,6 +43,7 @@ export interface AiChatRequest {
   lon?: number;
   history: AiChatTurn[];
   familyProfile: FamilyProfile;
+  clientReading?: ClientAirQualityFallback;
 }
 
 export interface AiChatResponse {
@@ -267,6 +279,72 @@ function normalizeOutcomeLabel(outcome: AiStructuredAdvice['recommendations'][nu
   }
 }
 
+function normalizeClientReadingFallback(
+  req: AiChatRequest,
+): NormalizedCurrentAirQuality | null {
+  const client = req.clientReading;
+  if (!client) return null;
+
+  const clientSlug = (client.location.slug ?? client.location.id).trim().toLowerCase();
+  const reqSlug = req.slug?.trim().toLowerCase();
+  if (reqSlug && clientSlug && reqSlug !== clientSlug) {
+    return null;
+  }
+
+  const staleness = evaluateStaleness(client.provenance.observedAt);
+  const missingSet = new Set<PollutantKey>(
+    (client.missingPollutants ?? []).filter((k): k is PollutantKey =>
+      ['usAqi', 'pm25', 'pm10', 'no2', 'so2', 'o3', 'co'].includes(k),
+    ),
+  );
+
+  return {
+    location: {
+      id: clientSlug || client.location.id,
+      slug: client.location.slug ?? clientSlug,
+      name: client.location.name,
+      city: client.location.city,
+      state: client.location.state,
+      country: client.location.country,
+      countryName: client.location.countryName,
+      kind: client.location.kind,
+      lat: client.location.lat,
+      lon: client.location.lon,
+      distanceKm: client.location.distanceKm,
+    },
+    aqi: {
+      value: client.aqi.value,
+      scale: client.aqi.scale,
+      category: client.aqi.category as AqiCategory | 'Unavailable',
+      dominantPollutant: client.aqi.dominantPollutant,
+    },
+    pollutants: client.pollutants.map((p) => ({
+      ...p,
+      status: p.status ?? (p.value === null ? 'unavailable' : 'measured'),
+    })),
+    missingPollutants: Array.from(missingSet),
+    provenance: {
+      providerId: 'airlive',
+      providerName: client.provenance.providerName,
+      stationName: client.provenance.stationName,
+      measurementType: client.provenance.measurementType,
+      sourceLabel: client.provenance.sourceLabel ?? 'AirLive Station',
+      stationsUsed: client.provenance.stationsUsed ?? null,
+      observedAt: client.provenance.observedAt,
+      fetchedAt: client.provenance.fetchedAt,
+      isStale: staleness.isStale,
+      freshnessStatus: staleness.freshnessStatus,
+      staleReason: staleness.staleReason,
+      spatialResolution: client.provenance.spatialResolution,
+      attribution: client.provenance.attribution,
+      attributionUrl: sanitizeHttpUrl(client.provenance.attributionUrl) ?? AIRLIVE_BASE_URL,
+      placeUrl: sanitizeHttpUrl(client.provenance.placeUrl),
+      coverageLimitations: client.provenance.coverageLimitations,
+      cacheHit: false,
+    },
+  };
+}
+
 export class GeminiAssistantService {
   private readonly config: ServerConfig;
   private readonly airQualityService: AirQualityService;
@@ -310,11 +388,25 @@ export class GeminiAssistantService {
         lon: req.lon,
       });
     } catch (err) {
-      unavailableReason =
+      const serverErrMessage =
         err instanceof Error ? err.message : 'Live AirLive reading could not be retrieved.';
-      logWarn('GeminiAssistantService', 'Proceeding with unavailable live reading context', {
-        reason: unavailableReason,
-      });
+      const clientFallback = normalizeClientReadingFallback(req);
+      if (clientFallback) {
+        reading = clientFallback;
+        logWarn(
+          'GeminiAssistantService',
+          'Server AirLive fetch unavailable; using validated browser-fetched AirLive reading',
+          {
+            slug: clientFallback.location.slug ?? clientFallback.location.id,
+            reason: serverErrMessage,
+          },
+        );
+      } else {
+        unavailableReason = serverErrMessage;
+        logWarn('GeminiAssistantService', 'Proceeding with unavailable live reading context', {
+          reason: unavailableReason,
+        });
+      }
     }
 
     const requestedLabel = req.slug || req.city || 'selected location';

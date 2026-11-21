@@ -79,6 +79,58 @@ export const recommendationsBodySchema = z
     },
   );
 
+const clientReadingPollutantSchema = z.object({
+  key: z.enum(['pm25', 'pm10', 'no2', 'so2', 'o3', 'co']),
+  label: z.string().trim().min(1).max(32),
+  value: z.number().min(0).max(5000).nullable(),
+  unit: z.enum(['µg/m³', 'mg/m³']),
+  subIndex: z.number().min(0).max(1000).nullable(),
+  safeReference: z.string().trim().min(1).max(120),
+  status: z.enum(['measured', 'unavailable']).optional(),
+});
+
+export const clientReadingSchema = z.object({
+  location: z.object({
+    id: z.string().trim().min(1).max(120),
+    slug: slugField.optional(),
+    name: z.string().trim().min(1).max(120),
+    city: z.string().trim().min(1).max(120),
+    state: z.string().trim().max(120).optional(),
+    country: z.string().trim().max(8).optional(),
+    countryName: z.string().trim().max(120).optional(),
+    kind: z.string().trim().max(32).optional(),
+    lat: z.number().min(-90).max(90),
+    lon: z.number().min(-180).max(180),
+    distanceKm: z.number().min(0).max(500).optional(),
+  }),
+  aqi: z.object({
+    value: z.number().min(0).max(1000).nullable(),
+    scale: z.enum(['US_AQI', 'INDIA_CPCB_NAQI']),
+    category: z.string().trim().min(1).max(60),
+    dominantPollutant: z.string().trim().min(1).max(40),
+  }),
+  pollutants: z.array(clientReadingPollutantSchema).max(10),
+  missingPollutants: z.array(z.string().trim().max(32)).max(12).optional(),
+  provenance: z.object({
+    providerId: z.literal('airlive'),
+    providerName: z.string().trim().min(1).max(60),
+    stationName: z.string().trim().min(1).max(120),
+    measurementType: z.enum(['ground_station', 'modeled_forecast']),
+    sourceLabel: z.string().trim().min(1).max(120).optional(),
+    stationsUsed: z.number().int().min(0).max(10000).nullable().optional(),
+    observedAt: z.string().trim().max(80).nullable(),
+    fetchedAt: z.string().trim().min(1).max(80),
+    isStale: z.boolean(),
+    freshnessStatus: z.enum(['fresh', 'stale', 'unavailable']).optional(),
+    staleReason: z.string().trim().max(240).optional(),
+    spatialResolution: z.string().trim().min(1).max(200),
+    attribution: z.string().trim().min(1).max(300),
+    attributionUrl: z.string().trim().max(300).optional(),
+    placeUrl: z.string().trim().max(300).optional(),
+    coverageLimitations: z.string().trim().max(500),
+  }),
+});
+
 export const aiChatBodySchema = z.object({
   message: z
     .string()
@@ -100,6 +152,7 @@ export const aiChatBodySchema = z.object({
     .optional()
     .default([]),
   familyProfile: FamilyProfileSchema,
+  clientReading: clientReadingSchema.optional(),
 });
 
 // AirLive API Response Schemas (https://airlive.tracsa.co.in/)
