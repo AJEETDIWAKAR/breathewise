@@ -4,10 +4,12 @@ import {
   parseStoredSettings,
   parseStoredStringArray,
   validateFamilyProfile,
-  type AppSettings,
-  type FamilyProfile,
-  type ImpactLogEntry,
-  type LocationOption,
+} from '../domain/profileValidators';
+import type {
+  AppSettings,
+  FamilyProfile,
+  ImpactLogEntry,
+  LocationOption,
 } from '../types/breathewise';
 
 export const STORAGE_KEYS = {

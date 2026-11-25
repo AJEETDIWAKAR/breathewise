@@ -20,10 +20,14 @@ export function Input({
   const errorId = `${inputId}-error`;
   const helperId = `${inputId}-helper`;
 
-  const describedByIds = [
-    callerDescribedBy,
-    errorText ? errorId : helperText ? helperId : undefined,
-  ]
+  let fieldNoteId: string | undefined;
+  if (errorText) {
+    fieldNoteId = errorId;
+  } else if (helperText) {
+    fieldNoteId = helperId;
+  }
+
+  const describedByIds = [callerDescribedBy, fieldNoteId]
     .filter(Boolean)
     .join(' ');
 

@@ -24,20 +24,6 @@ export function LocationSelector() {
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const restoreFocusOnCloseRef = useRef(false);
 
-  const handleEscapeClose = useCallback(() => {
-    restoreFocusOnCloseRef.current = true;
-    setOpen(false);
-  }, []);
-
-  useFocusTrap({
-    active: open,
-    containerRef: dialogRef,
-    initialFocusRef: searchInputRef,
-    onEscape: handleEscapeClose,
-    restoreFocus: true,
-    shouldRestoreFocus: () => restoreFocusOnCloseRef.current,
-  });
-
   const {
     loading: geoLoading,
     error: geoError,
@@ -52,27 +38,45 @@ export function LocationSelector() {
     onSuccess: () => {
       restoreFocusOnCloseRef.current = true;
       setOpen(false);
+      setQuery('');
     },
   });
 
-  useEffect(() => {
-    if (!open) {
+  const resetAndClose = useCallback(
+    (restoreFocus: boolean) => {
+      restoreFocusOnCloseRef.current = restoreFocus;
+      setOpen(false);
       setQuery('');
       clearGeoError();
-      restoreFocusOnCloseRef.current = false;
-      return;
-    }
+    },
+    [clearGeoError],
+  );
+
+  const handleEscapeClose = useCallback(() => {
+    resetAndClose(true);
+  }, [resetAndClose]);
+
+  useFocusTrap({
+    active: open,
+    containerRef: dialogRef,
+    initialFocusRef: searchInputRef,
+    onEscape: handleEscapeClose,
+    restoreFocus: true,
+    shouldRestoreFocus: () => restoreFocusOnCloseRef.current,
+  });
+
+  useEffect(() => {
+    if (!open) return;
     const handleClickOutside = (e: MouseEvent) => {
       if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
-        restoreFocusOnCloseRef.current = false;
-        setOpen(false);
+        resetAndClose(false);
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => {
       document.removeEventListener('mousedown', handleClickOutside);
     };
-  }, [clearGeoError, open]);
+  }, [open, resetAndClose]);
 
   const placeMetricsBySlug = useMemo(() => {
     const map = new Map<string, { usAqi: number | null; source: string }>();
@@ -99,9 +103,7 @@ export function LocationSelector() {
 
   const handleSelect = (loc: LocationOption) => {
     setLocation(loc);
-    clearGeoError();
-    restoreFocusOnCloseRef.current = true;
-    setOpen(false);
+    resetAndClose(true);
   };
 
   return (
@@ -110,7 +112,10 @@ export function LocationSelector() {
         type="button"
         aria-label="Select monitoring location"
         aria-expanded={open}
-        onClick={() => setOpen((prev) => !prev)}
+        onClick={() => {
+          if (open) resetAndClose(false);
+          else setOpen(true);
+        }}
         className="flex items-center gap-1.5 bg-slate-50 hover:bg-slate-100 border border-slate-300 rounded-md px-2 sm:px-2.5 py-1.5 text-xs sm:text-sm font-medium text-slate-800 cursor-pointer max-w-[128px] sm:max-w-[260px]"
       >
         <MapPin className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-teal-700 shrink-0" aria-hidden="true" />
@@ -198,52 +203,51 @@ export function LocationSelector() {
             )}
           </div>
 
-          <ul
+          <div
             role="listbox"
             aria-label="Supported Indian locations"
             className="max-h-72 overflow-y-auto divide-y divide-slate-100"
           >
             {filteredLocations.length === 0 ? (
-              <li className="px-4 py-6 text-center text-xs text-slate-600">
+              <p className="px-4 py-6 text-center text-xs text-slate-600">
                 No matching supported AirLive locations found for &ldquo;{query}&rdquo;.
-              </li>
+              </p>
             ) : (
               filteredLocations.map((loc) => {
                 const isSelected = loc.slug === location.slug;
                 const meta = placeMetricsBySlug.get(loc.slug);
                 return (
-                  <li key={loc.slug}>
-                    <button
-                      type="button"
-                      role="option"
-                      aria-selected={isSelected}
-                      onClick={() => handleSelect(loc)}
-                      className={`w-full px-3.5 py-2.5 flex items-center justify-between gap-2 text-left text-xs sm:text-sm cursor-pointer transition-colors ${
-                        isSelected ? 'bg-teal-50 text-teal-900 font-semibold' : 'hover:bg-slate-50 text-slate-800'
-                      }`}
-                    >
-                      <div className="min-w-0">
-                        <p className="truncate">
-                          {loc.name}{' '}
-                          <span className="text-slate-600 font-normal">
-                            · {loc.countryName || loc.state || 'India'}
-                          </span>
-                        </p>
-                        <p className="text-[11px] text-slate-600 font-mono truncate">
-                          {loc.kind ?? 'city'} · {loc.slug}
-                        </p>
-                      </div>
-                      {meta && meta.usAqi !== null && (
-                        <span className="shrink-0 font-mono text-xs px-1.5 py-0.5 rounded bg-slate-100 text-slate-800">
-                          US AQI {meta.usAqi}
+                  <button
+                    key={loc.slug}
+                    type="button"
+                    role="option"
+                    aria-selected={isSelected}
+                    onClick={() => handleSelect(loc)}
+                    className={`w-full px-3.5 py-2.5 flex items-center justify-between gap-2 text-left text-xs sm:text-sm cursor-pointer transition-colors ${
+                      isSelected ? 'bg-teal-50 text-teal-900 font-semibold' : 'hover:bg-slate-50 text-slate-800'
+                    }`}
+                  >
+                    <div className="min-w-0">
+                      <p className="truncate">
+                        {loc.name}{' '}
+                        <span className="text-slate-600 font-normal">
+                          · {loc.countryName || loc.state || 'India'}
                         </span>
-                      )}
-                    </button>
-                  </li>
+                      </p>
+                      <p className="text-[11px] text-slate-600 font-mono truncate">
+                        {loc.kind ?? 'city'} · {loc.slug}
+                      </p>
+                    </div>
+                    {meta && meta.usAqi !== null && (
+                      <span className="shrink-0 font-mono text-xs px-1.5 py-0.5 rounded bg-slate-100 text-slate-800">
+                        US AQI {meta.usAqi}
+                      </span>
+                    )}
+                  </button>
                 );
               })
             )}
-          </ul>
+          </div>
         </div>
       )}
     </div>

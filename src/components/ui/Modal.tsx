@@ -1,5 +1,4 @@
-import type React from 'react';
-import { useId, useRef } from 'react';
+import { useId, useRef, type ReactNode } from 'react';
 import { X } from 'lucide-react';
 import { useFocusTrap } from '../../hooks/useFocusTrap';
 import { Button } from './Button';
@@ -9,8 +8,8 @@ interface ModalProps {
   onClose: () => void;
   title: string;
   description?: string;
-  children: React.ReactNode;
-  footer?: React.ReactNode;
+  children: ReactNode;
+  footer?: ReactNode;
 }
 
 export function Modal({ open, onClose, title, description, children, footer }: ModalProps) {

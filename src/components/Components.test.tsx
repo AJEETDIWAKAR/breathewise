@@ -23,6 +23,29 @@ import { DEFAULT_FAMILY_PROFILE, PRESET_LOCATIONS } from '../data/previewFixture
 import { HourlyTrendChart } from './ui/HourlyTrendChart';
 import { Modal } from './ui/Modal';
 
+function buildDirectCurrentPlaceResponse(url: string, nowIso: string) {
+  const slug = decodeURIComponent(url.split('/').pop() ?? 'delhi');
+  const isNoida = slug === 'noida';
+  return new Response(
+    JSON.stringify({
+      slug,
+      name: isNoida ? 'Noida' : 'Delhi',
+      kind: 'city',
+      country: 'IN',
+      countryName: 'India',
+      lat: isNoida ? 28.5355 : 28.6139,
+      lon: isNoida ? 77.391 : 77.209,
+      usAqi: isNoida ? 185 : 240,
+      category: isNoida ? 'Unhealthy' : 'Very Unhealthy',
+      pm25: isNoida ? 120.5 : 190.2,
+      source: 'ground stations',
+      stationsUsed: 3,
+      updated: nowIso,
+    }),
+    { status: 200 },
+  );
+}
+
 function makeDirectAirLiveMockFetch(options: { includeServerApi?: boolean } = {}) {
   const nowIso = new Date().toISOString();
   const hourStr = nowIso.slice(0, 13) + ':00';
@@ -87,25 +110,7 @@ function makeDirectAirLiveMockFetch(options: { includeServerApi?: boolean } = {}
     }
 
     if (url.startsWith('https://airlive.tracsa.co.in/api/v1/aqi/')) {
-      const slug = decodeURIComponent(url.split('/').pop() ?? 'delhi');
-      return new Response(
-        JSON.stringify({
-          slug,
-          name: slug === 'noida' ? 'Noida' : 'Delhi',
-          kind: 'city',
-          country: 'IN',
-          countryName: 'India',
-          lat: slug === 'noida' ? 28.5355 : 28.6139,
-          lon: slug === 'noida' ? 77.391 : 77.209,
-          usAqi: slug === 'noida' ? 185 : 240,
-          category: slug === 'noida' ? 'Unhealthy' : 'Very Unhealthy',
-          pm25: slug === 'noida' ? 120.5 : 190.2,
-          source: 'ground stations',
-          stationsUsed: 3,
-          updated: nowIso,
-        }),
-        { status: 200 },
-      );
+      return buildDirectCurrentPlaceResponse(url, nowIso);
     }
 
     if (url.startsWith('https://airlive.tracsa.co.in/api/v1/ranking')) {
@@ -155,6 +160,135 @@ function makeDirectAirLiveMockFetch(options: { includeServerApi?: boolean } = {}
   });
 }
 
+function buildRichCurrentReadingJson(isBlr: boolean, nowIso: string) {
+  return {
+    location: {
+      id: isBlr ? 'bengaluru' : 'delhi',
+      slug: isBlr ? 'bengaluru' : 'delhi',
+      name: isBlr ? 'Bengaluru' : 'Delhi',
+      city: isBlr ? 'Bengaluru' : 'Delhi',
+      state: 'India',
+      country: 'IN',
+      countryName: 'India',
+      kind: 'city',
+      lat: isBlr ? 12.9716 : 28.6139,
+      lon: isBlr ? 77.5946 : 77.209,
+    },
+    aqi: {
+      value: isBlr ? 54 : 262,
+      scale: 'US_AQI',
+      category: isBlr ? 'Moderate' : 'Very Unhealthy',
+      dominantPollutant: 'PM2.5',
+    },
+    pollutants: [
+      {
+        key: 'pm25',
+        label: 'PM2.5',
+        value: isBlr ? 13.4 : 212.1,
+        unit: 'µg/m³',
+        subIndex: isBlr ? 54 : 262,
+        safeReference: 'WHO 24h: 15 µg/m³ · EPA 24h: 35 µg/m³',
+        status: 'measured',
+      },
+    ],
+    provenance: {
+      providerId: 'airlive',
+      providerName: 'AirLive',
+      stationName: isBlr ? 'Bengaluru (4 ground stations)' : 'Delhi (3 ground stations)',
+      measurementType: 'ground_station',
+      sourceLabel: 'Ground Stations',
+      stationsUsed: isBlr ? 4 : 3,
+      observedAt: nowIso,
+      fetchedAt: nowIso,
+      isStale: false,
+      freshnessStatus: 'fresh',
+      attribution: 'Data: AirLive (https://airlive.tracsa.co.in).',
+      attributionUrl: 'https://airlive.tracsa.co.in',
+    },
+  };
+}
+
+function buildRichPlacesResponse(nowIso: string) {
+  return new Response(
+    JSON.stringify({
+      updated: nowIso,
+      count: 2,
+      attribution: 'Data: AirLive (https://airlive.tracsa.co.in).',
+      attributionUrl: 'https://airlive.tracsa.co.in',
+      cacheHit: false,
+      items: [
+        {
+          slug: 'delhi',
+          name: 'Delhi',
+          kind: 'city',
+          country: 'IN',
+          countryName: 'India',
+          lat: 28.6139,
+          lon: 77.209,
+          usAqi: 262,
+          category: 'Very Unhealthy',
+          pm25: 212.1,
+          source: 'ground stations',
+          measurementType: 'ground_station',
+          stationsUsed: 3,
+          updated: nowIso,
+          freshnessStatus: 'fresh',
+        },
+        {
+          slug: 'bengaluru',
+          name: 'Bengaluru',
+          kind: 'city',
+          country: 'IN',
+          countryName: 'India',
+          lat: 12.9716,
+          lon: 77.5946,
+          usAqi: 54,
+          category: 'Moderate',
+          pm25: 13.4,
+          source: 'ground stations',
+          measurementType: 'ground_station',
+          stationsUsed: 4,
+          updated: nowIso,
+          freshnessStatus: 'fresh',
+        },
+      ],
+    }),
+    { status: 200, headers: { 'Content-Type': 'application/json' } },
+  );
+}
+
+function buildRichRankingResponse(isBest: boolean, nowIso: string) {
+  return new Response(
+    JSON.stringify({
+      updated: nowIso,
+      attribution: 'Data: AirLive (https://airlive.tracsa.co.in).',
+      attributionUrl: 'https://airlive.tracsa.co.in',
+      cacheHit: false,
+      items: [
+        {
+          rank: 1,
+          slug: isBest ? 'bengaluru' : 'delhi',
+          name: isBest ? 'Bengaluru' : 'Delhi',
+          kind: 'city',
+          country: 'IN',
+          countryName: 'India',
+          lat: isBest ? 12.9716 : 28.6139,
+          lon: isBest ? 77.5946 : 77.209,
+          usAqi: isBest ? 54 : 262,
+          category: isBest ? 'Moderate' : 'Very Unhealthy',
+          pm25: isBest ? 13.4 : 212.1,
+          source: 'ground stations',
+          measurementType: 'ground_station',
+          stationsUsed: isBest ? 4 : 3,
+          updated: nowIso,
+          freshnessStatus: 'fresh',
+        },
+      ],
+    }),
+    { status: 200, headers: { 'Content-Type': 'application/json' } },
+  );
+}
+
 function makeRichServerMockFetch(options: { failCurrentOnce?: boolean } = {}) {
   const nowIso = new Date().toISOString();
   const hourStr = nowIso.slice(0, 13) + ':00';
@@ -164,85 +298,11 @@ function makeRichServerMockFetch(options: { failCurrentOnce?: boolean } = {}) {
     const url = typeof input === 'string' ? input : input.toString();
 
     if (url.includes('/api/air-quality/places')) {
-      return new Response(
-        JSON.stringify({
-          updated: nowIso,
-          count: 2,
-          attribution: 'Data: AirLive (https://airlive.tracsa.co.in).',
-          attributionUrl: 'https://airlive.tracsa.co.in',
-          cacheHit: false,
-          items: [
-            {
-              slug: 'delhi',
-              name: 'Delhi',
-              kind: 'city',
-              country: 'IN',
-              countryName: 'India',
-              lat: 28.6139,
-              lon: 77.209,
-              usAqi: 262,
-              category: 'Very Unhealthy',
-              pm25: 212.1,
-              source: 'ground stations',
-              measurementType: 'ground_station',
-              stationsUsed: 3,
-              updated: nowIso,
-              freshnessStatus: 'fresh',
-            },
-            {
-              slug: 'bengaluru',
-              name: 'Bengaluru',
-              kind: 'city',
-              country: 'IN',
-              countryName: 'India',
-              lat: 12.9716,
-              lon: 77.5946,
-              usAqi: 54,
-              category: 'Moderate',
-              pm25: 13.4,
-              source: 'ground stations',
-              measurementType: 'ground_station',
-              stationsUsed: 4,
-              updated: nowIso,
-              freshnessStatus: 'fresh',
-            },
-          ],
-        }),
-        { status: 200, headers: { 'Content-Type': 'application/json' } },
-      );
+      return buildRichPlacesResponse(nowIso);
     }
 
     if (url.includes('/api/air-quality/ranking')) {
-      const isBest = url.includes('order=best');
-      return new Response(
-        JSON.stringify({
-          updated: nowIso,
-          attribution: 'Data: AirLive (https://airlive.tracsa.co.in).',
-          attributionUrl: 'https://airlive.tracsa.co.in',
-          cacheHit: false,
-          items: [
-            {
-              rank: 1,
-              slug: isBest ? 'bengaluru' : 'delhi',
-              name: isBest ? 'Bengaluru' : 'Delhi',
-              kind: 'city',
-              country: 'IN',
-              countryName: 'India',
-              lat: isBest ? 12.9716 : 28.6139,
-              lon: isBest ? 77.5946 : 77.209,
-              usAqi: isBest ? 54 : 262,
-              category: isBest ? 'Moderate' : 'Very Unhealthy',
-              pm25: isBest ? 13.4 : 212.1,
-              source: 'ground stations',
-              measurementType: 'ground_station',
-              stationsUsed: isBest ? 4 : 3,
-              updated: nowIso,
-              freshnessStatus: 'fresh',
-            },
-          ],
-        }),
-        { status: 200, headers: { 'Content-Type': 'application/json' } },
-      );
+      return buildRichRankingResponse(url.includes('order=best'), nowIso);
     }
 
     if (url.includes('/api/air-quality/search')) {
@@ -285,54 +345,10 @@ function makeRichServerMockFetch(options: { failCurrentOnce?: boolean } = {}) {
         );
       }
       const isBlr = url.includes('bengaluru') || url.includes('lat=12.97');
-      return new Response(
-        JSON.stringify({
-          location: {
-            id: isBlr ? 'bengaluru' : 'delhi',
-            slug: isBlr ? 'bengaluru' : 'delhi',
-            name: isBlr ? 'Bengaluru' : 'Delhi',
-            city: isBlr ? 'Bengaluru' : 'Delhi',
-            state: 'India',
-            country: 'IN',
-            countryName: 'India',
-            kind: 'city',
-            lat: isBlr ? 12.9716 : 28.6139,
-            lon: isBlr ? 77.5946 : 77.209,
-          },
-          aqi: {
-            value: isBlr ? 54 : 262,
-            scale: 'US_AQI',
-            category: isBlr ? 'Moderate' : 'Very Unhealthy',
-            dominantPollutant: 'PM2.5',
-          },
-          pollutants: [
-            {
-              key: 'pm25',
-              label: 'PM2.5',
-              value: isBlr ? 13.4 : 212.1,
-              unit: 'µg/m³',
-              subIndex: isBlr ? 54 : 262,
-              safeReference: 'WHO 24h: 15 µg/m³ · EPA 24h: 35 µg/m³',
-              status: 'measured',
-            },
-          ],
-          provenance: {
-            providerId: 'airlive',
-            providerName: 'AirLive',
-            stationName: isBlr ? 'Bengaluru (4 ground stations)' : 'Delhi (3 ground stations)',
-            measurementType: 'ground_station',
-            sourceLabel: 'Ground Stations',
-            stationsUsed: isBlr ? 4 : 3,
-            observedAt: nowIso,
-            fetchedAt: nowIso,
-            isStale: false,
-            freshnessStatus: 'fresh',
-            attribution: 'Data: AirLive (https://airlive.tracsa.co.in).',
-            attributionUrl: 'https://airlive.tracsa.co.in',
-          },
-        }),
-        { status: 200, headers: { 'Content-Type': 'application/json' } },
-      );
+      return new Response(JSON.stringify(buildRichCurrentReadingJson(isBlr, nowIso)), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
     }
 
     if (url.includes('/api/air-quality/history')) {
@@ -888,5 +904,115 @@ describe('UI Components, Accessibility Focus Traps, Client API Fallback, & Page 
     await expect(fetchLiveCurrentAirQuality(PRESET_LOCATIONS[0])).rejects.toBeInstanceOf(
       ApiClientError,
     );
+  });
+
+  it('exercises FamilyPage full form controls, IndoorPage CADR/cost tabs, ImpactModals empty-title validation, PlannerPage advisory copy fallback, and OverviewPage navigation', async () => {
+    vi.stubGlobal('fetch', makeRichServerMockFetch());
+    render(<App />);
+
+    // 1. Overview navigation shortcuts & unit switch
+    await waitFor(() => {
+      expect(screen.getByText(/Current Air Quality Summary/i)).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /Explore India cities & ranking/i }));
+    expect(await screen.findByRole('heading', { level: 1, name: /Air Quality/i })).toBeInTheDocument();
+
+    const mainNav = screen.getByRole('navigation', { name: 'Main navigation' });
+    fireEvent.click(within(mainNav).getByRole('button', { name: 'Overview' }));
+    fireEvent.click(await screen.findByRole('button', { name: /Open Daily Planner/i }));
+    expect(await screen.findByRole('heading', { level: 1, name: /Daily Planner/i })).toBeInTheDocument();
+
+    // 2. PlannerPage clipboard-unavailable manual preview box & Edit family profile navigation
+    Object.defineProperty(window.navigator, 'clipboard', { configurable: true, value: undefined });
+    fireEvent.click(screen.getByRole('button', { name: /Copy community advisory/i }));
+    expect(
+      await screen.findByText(/Shareable Family & Community Advisory/i),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Dismiss/i }));
+
+    fireEvent.click(screen.getByRole('button', { name: /Edit family profile/i }));
+    expect(await screen.findByRole('heading', { level: 1, name: /My Family/i })).toBeInTheDocument();
+
+    // 3. FamilyPage: edit all profile controls, save validly, and navigate to Planner
+    fireEvent.change(screen.getByLabelText(/Adults \(18–64\)/i), { target: { value: '3' } });
+    fireEvent.change(screen.getByLabelText(/Children \(0–17\)/i), { target: { value: '2' } });
+    fireEvent.change(screen.getByLabelText(/Seniors \(65\+\)/i), { target: { value: '1' } });
+    fireEvent.change(screen.getByLabelText(/Typical round-trip commute distance/i), {
+      target: { value: '18' },
+    });
+
+    const checkboxes = screen.getAllByRole('checkbox');
+    for (const cb of checkboxes) {
+      fireEvent.click(cb);
+    }
+
+    fireEvent.change(screen.getByLabelText(/Primary daily commute mode/i), {
+      target: { value: 'two_wheeler' },
+    });
+    fireEvent.change(screen.getByLabelText(/Work schedule pattern/i), {
+      target: { value: 'flexible_hybrid' },
+    });
+    fireEvent.change(screen.getByLabelText(/School \/ college schedule/i), {
+      target: { value: 'online_or_none' },
+    });
+    fireEvent.change(screen.getByLabelText(/Primary outdoor activity pattern/i), {
+      target: { value: 'running_sports' },
+    });
+    fireEvent.change(screen.getByLabelText(/Usual outdoor activity window/i), {
+      target: { value: 'midday' },
+    });
+    fireEvent.change(screen.getByLabelText(/Monthly clean-air budget tier/i), {
+      target: { value: 'flexible' },
+    });
+    fireEvent.change(screen.getByLabelText(/Primary cooking fuel/i), {
+      target: { value: 'induction' },
+    });
+    fireEvent.change(screen.getByLabelText(/Housing & window sealing condition/i), {
+      target: { value: 'high_traffic_roadside' },
+    });
+    fireEvent.change(screen.getByLabelText(/Kitchen ventilation & exhaust setup/i), {
+      target: { value: 'chimney_or_exhaust' },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /Save Family Profile/i }));
+    expect(await screen.findByText(/Profile saved locally/i)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /View Personalized Daily Plan/i }));
+    expect(await screen.findByRole('heading', { level: 1, name: /Daily Planner/i })).toBeInTheDocument();
+
+    // 4. IndoorPage: adjust room area & clamp onBlur, switch cost filter tabs, toggle measure
+    fireEvent.click(within(mainNav).getByRole('button', { name: 'Indoor Air' }));
+    const roomAreaInput = await screen.findByLabelText(/Primary room floor area/i);
+    fireEvent.change(roomAreaInput, { target: { value: '20' } });
+    fireEvent.blur(roomAreaInput);
+    expect((roomAreaInput as HTMLInputElement).value).toBe('50');
+
+    fireEvent.click(screen.getByRole('button', { name: /Low-Cost/i }));
+    const measureButtons = screen.getAllByRole('button', { name: /^(Mark done|Done)$/i });
+    fireEvent.click(measureButtons[0]);
+
+    fireEvent.click(screen.getByRole('button', { name: /Adjust home profile/i }));
+    expect(await screen.findByRole('heading', { level: 1, name: /My Family/i })).toBeInTheDocument();
+
+    // 5. ImpactModals: trigger empty-title validation error & edit date/assumptions
+    fireEvent.click(within(mainNav).getByRole('button', { name: 'Environmental Impact' }));
+    const editButtons = await screen.findAllByRole('button', { name: /^Edit logged action /i });
+    fireEvent.click(editButtons[0]);
+    const editModal = await screen.findByRole('dialog', { name: /Edit Logged Action/i });
+    const titleField = within(editModal).getByLabelText(/Action title/i);
+    fireEvent.change(titleField, { target: { value: '   ' } });
+    fireEvent.click(within(editModal).getByRole('button', { name: /Save changes/i }));
+    expect(await within(editModal).findByText(/Action title cannot be empty\./i)).toBeInTheDocument();
+
+    fireEvent.change(titleField, { target: { value: 'Updated verified transit action' } });
+    fireEvent.change(within(editModal).getByLabelText(/^Date$/i), {
+      target: { value: '2026-11-15' },
+    });
+    fireEvent.change(within(editModal).getByLabelText(/Assumptions \/ notes/i), {
+      target: { value: 'Verified metro route distance' },
+    });
+    fireEvent.click(within(editModal).getByRole('button', { name: /Save changes/i }));
+    expect(await screen.findByText('Updated verified transit action')).toBeInTheDocument();
   });
 });

@@ -13,7 +13,6 @@ import {
   saveToStorage,
   STORAGE_KEYS,
 } from './storagePersistence';
-import { mapPlaceToLocationOption } from '../domain/airliveNormalize';
 import {
   ANONYMOUS_MINIMAL_PROFILE,
   DEFAULT_FAMILY_PROFILE,
@@ -21,17 +20,8 @@ import {
   DEFAULT_PREVIEW_IMPACT_LOGS,
   DEFAULT_SETTINGS,
   PRESET_LOCATIONS,
-  getPreviewFixtureForecast,
-  getPreviewFixtureReading,
 } from '../data/previewFixtures';
-import {
-  ApiClientError,
-  fetchAirLivePlaces,
-  fetchIndiaRanking,
-  fetchLiveCurrentAirQuality,
-  fetchLiveHistoryAirQuality,
-  type AirLivePlaceDto,
-} from '../services/airQualityApi';
+import { fetchLiveCurrentAirQuality, type AirLivePlaceDto } from '../services/airQualityApi';
 import type {
   AirQualityRankingItem,
   AirQualityReading,
@@ -44,16 +34,14 @@ import type {
   LocationOption,
   PageId,
 } from '../types/breathewise';
+import { useAirQualityDirectory } from './useAirQualityDirectory';
+import {
+  useLiveAirQualitySync,
+  type LiveFetchErrorInfo,
+  type LiveFetchStatus,
+} from './useLiveAirQualitySync';
 
-const CLIENT_READING_CACHE_TTL_MS = 5 * 60 * 1000;
-
-export type LiveFetchStatus = 'idle' | 'loading' | 'ready' | 'unavailable' | 'error';
-
-export interface LiveFetchErrorInfo {
-  code: string;
-  message: string;
-  retryable: boolean;
-}
+export type { LiveFetchErrorInfo, LiveFetchStatus };
 
 interface AppStateContextValue {
   activePage: PageId;
@@ -113,32 +101,10 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
 
   const [activePage, setActivePage] = useState<PageId>('overview');
   const [location, setLocationState] = useState<LocationOption>(initialPersisted.location);
-  const [airLivePlaces, setAirLivePlaces] = useState<AirLivePlaceDto[]>([]);
-  const [placesLoading, setPlacesLoading] = useState<boolean>(true);
-  const [placesError, setPlacesError] = useState<string | null>(null);
-  const [placesNonce, setPlacesNonce] = useState(0);
-
-  const [indiaRanking, setIndiaRanking] = useState<AirQualityRankingItem[]>([]);
-  const [rankingOrder, setRankingOrder] = useState<'worst' | 'best'>('worst');
-  const [rankingLoading, setRankingLoading] = useState<boolean>(true);
-  const [rankingError, setRankingError] = useState<string | null>(null);
-
   const [isOffline, setIsOffline] = useState<boolean>(
     () => typeof navigator !== 'undefined' && navigator.onLine === false,
   );
-
   const [settings, setSettings] = useState<AppSettings>(initialPersisted.settings);
-  const [dataState, setDataState] = useState<DashboardDataState>(() =>
-    initialPersisted.settings.dataModePreference === 'live' ? 'live' : 'preview',
-  );
-  const [liveStatus, setLiveStatus] = useState<LiveFetchStatus>(() =>
-    initialPersisted.settings.dataModePreference === 'live' ? 'loading' : 'idle',
-  );
-  const [liveError, setLiveError] = useState<LiveFetchErrorInfo | null>(null);
-  const [liveReading, setLiveReading] = useState<AirQualityReading | null>(null);
-  const [liveForecast, setLiveForecast] = useState<HourlyForecastPoint[]>([]);
-  const [liveRetryNonce, setLiveRetryNonce] = useState(0);
-
   const [familyProfile, setFamilyProfile] = useState<FamilyProfile>(initialPersisted.familyProfile);
   const [impactLogs, setImpactLogs] = useState<ImpactLogEntry[]>(initialPersisted.impactLogs);
   const [completedPlannerIds, setCompletedPlannerIds] = useState<string[]>(
@@ -149,20 +115,29 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
   );
   const [readNotifIds, setReadNotifIds] = useState<string[]>([]);
   const coordLookupSeqRef = useRef(0);
-  const clientReadingCacheRef = useRef(
-    new Map<
-      string,
-      { reading: AirQualityReading; forecast: HourlyForecastPoint[]; cachedAt: number }
-    >(),
-  );
-  const lastRetryNonceRef = useRef(0);
+
+  const directory = useAirQualityDirectory({
+    location,
+    onHydrateLocation: setLocationState,
+  });
+
+  const liveSync = useLiveAirQualitySync(location, initialPersisted.settings.dataModePreference);
+
+  const { refreshPlaces } = directory;
+  const {
+    dataState,
+    setDataState,
+    notifyLocationChanging,
+    clearCacheAndRefresh,
+    resetSyncState,
+    activeReading,
+  } = liveSync;
 
   useEffect(() => {
     const handleOnline = () => {
       setIsOffline(false);
-      clientReadingCacheRef.current.clear();
-      setLiveRetryNonce((n) => n + 1);
-      setPlacesNonce((n) => n + 1);
+      clearCacheAndRefresh();
+      refreshPlaces();
     };
     const handleOffline = () => {
       setIsOffline(true);
@@ -173,110 +148,23 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
     };
-  }, []);
+  }, [clearCacheAndRefresh, refreshPlaces]);
 
-  // Load Indian places directory from AirLive
-  useEffect(() => {
-    const controller = new AbortController();
-    setPlacesLoading(true);
-    setPlacesError(null);
-
-    fetchAirLivePlaces('IN', { signal: controller.signal })
-      .then((res) => {
-        if (controller.signal.aborted) return;
-        setAirLivePlaces(res.items);
-        setPlacesLoading(false);
-
-        if (res.items.length > 0) {
-          setLocationState((prev) => {
-            const match = res.items.find((p) => p.slug === prev.slug);
-            if (!match) return prev;
-            const mapped = mapPlaceToLocationOption(match);
-            if (
-              mapped.name === prev.name &&
-              mapped.country === prev.country &&
-              mapped.countryName === prev.countryName &&
-              mapped.kind === prev.kind &&
-              mapped.lat === prev.lat &&
-              mapped.lon === prev.lon
-            ) {
-              return prev;
-            }
-            return mapped;
-          });
-        }
-      })
-      .catch((err: unknown) => {
-        if (controller.signal.aborted) return;
-        setAirLivePlaces([]);
-        setPlacesLoading(false);
-        setPlacesError(
-          err instanceof Error
-            ? err.message
-            : 'Unable to load Indian locations directory from AirLive.',
-        );
-      });
-
-    return () => {
-      controller.abort();
-    };
-  }, [placesNonce]);
-
-  // Load India worst/best ranking from AirLive
-  useEffect(() => {
-    const controller = new AbortController();
-    setRankingLoading(true);
-    setRankingError(null);
-
-    fetchIndiaRanking(rankingOrder, 10, { signal: controller.signal })
-      .then((res) => {
-        if (controller.signal.aborted) return;
-        setIndiaRanking(res.items);
-        setRankingLoading(false);
-      })
-      .catch((err: unknown) => {
-        if (controller.signal.aborted) return;
-        setIndiaRanking([]);
-        setRankingLoading(false);
-        setRankingError(
-          err instanceof Error ? err.message : 'Unable to load India AQI ranking from AirLive.',
-        );
-      });
-
-    return () => {
-      controller.abort();
-    };
-  }, [placesNonce, rankingOrder]);
-
-  const availableLocations = useMemo(() => {
-    const map = new Map<string, LocationOption>();
-    if (airLivePlaces.length > 0) {
-      for (const place of airLivePlaces) {
-        map.set(place.slug, mapPlaceToLocationOption(place));
+  const setLocation = useCallback(
+    (next: LocationOption) => {
+      coordLookupSeqRef.current += 1;
+      const slug = next.slug || next.id;
+      if (dataState === 'live') {
+        notifyLocationChanging();
       }
-    } else {
-      for (const preset of PRESET_LOCATIONS) {
-        map.set(preset.slug, preset);
-      }
-    }
-    if (!map.has(location.slug)) {
-      map.set(location.slug, location);
-    }
-    return Array.from(map.values());
-  }, [airLivePlaces, location]);
-
-  const setLocation = useCallback((next: LocationOption) => {
-    coordLookupSeqRef.current += 1;
-    setLocationState({
-      ...next,
-      id: next.slug || next.id,
-      slug: next.slug || next.id,
-    });
-  }, []);
-
-  const refreshPlaces = useCallback(() => {
-    setPlacesNonce((n) => n + 1);
-  }, []);
+      setLocationState({
+        ...next,
+        id: slug,
+        slug,
+      });
+    },
+    [dataState, notifyLocationChanging],
+  );
 
   const selectLocationByCoordinates = useCallback(
     async (lat: number, lon: number): Promise<LocationOption> => {
@@ -308,106 +196,21 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
       }
       return matched;
     },
-    [],
+    [setDataState],
   );
-
-  const locationRef = useRef(location);
-  locationRef.current = location;
-
-  useEffect(() => {
-    if (dataState !== 'live') {
-      return;
-    }
-
-    const activeLocation = locationRef.current;
-    const forceRefresh = liveRetryNonce !== lastRetryNonceRef.current;
-    lastRetryNonceRef.current = liveRetryNonce;
-
-    if (!forceRefresh) {
-      const cached = clientReadingCacheRef.current.get(activeLocation.slug);
-      if (cached && Date.now() - cached.cachedAt < CLIENT_READING_CACHE_TTL_MS) {
-        setLiveReading(cached.reading);
-        setLiveForecast(cached.forecast);
-        setLiveError(null);
-        setLiveStatus('ready');
-        return;
-      }
-    }
-
-    const controller = new AbortController();
-    setLiveStatus('loading');
-    setLiveError(null);
-
-    Promise.all([
-      fetchLiveCurrentAirQuality(activeLocation, { signal: controller.signal }),
-      fetchLiveHistoryAirQuality(activeLocation, { signal: controller.signal }).catch(() => []),
-    ])
-      .then(([reading, history]) => {
-        if (controller.signal.aborted) return;
-        if (clientReadingCacheRef.current.size >= 20) {
-          const oldest = clientReadingCacheRef.current.keys().next().value;
-          if (oldest) clientReadingCacheRef.current.delete(oldest);
-        }
-        clientReadingCacheRef.current.set(location.slug, {
-          reading,
-          forecast: history,
-          cachedAt: Date.now(),
-        });
-        setLiveReading(reading);
-        setLiveForecast(history);
-        setLiveStatus('ready');
-      })
-      .catch((err: unknown) => {
-        if (controller.signal.aborted) return;
-        setLiveReading(null);
-        setLiveForecast([]);
-
-        if (err instanceof ApiClientError) {
-          setLiveError({
-            code: err.code,
-            message: err.message,
-            retryable: err.retryable,
-          });
-          setLiveStatus(
-            err.code === 'AQI_PROVIDER_UNAVAILABLE' || err.code === 'LOCATION_NOT_FOUND'
-              ? 'unavailable'
-              : 'error',
-          );
-        } else {
-          setLiveError({
-            code: 'NETWORK_ERROR',
-            message:
-              err instanceof Error
-                ? err.message
-                : 'Unable to reach BreatheWise backend air quality API.',
-            retryable: true,
-          });
-          setLiveStatus('error');
-        }
-      });
-
-    return () => {
-      controller.abort();
-    };
-  }, [dataState, location.slug, location.lat, location.lon, liveRetryNonce]);
 
   useEffect(() => saveToStorage(STORAGE_KEYS.location, location), [location]);
   useEffect(() => saveToStorage(STORAGE_KEYS.profile, familyProfile), [familyProfile]);
   useEffect(() => saveToStorage(STORAGE_KEYS.impactLogs, impactLogs), [impactLogs]);
   useEffect(() => saveToStorage(STORAGE_KEYS.settings, settings), [settings]);
-  useEffect(() => saveToStorage(STORAGE_KEYS.completedPlanner, completedPlannerIds), [completedPlannerIds]);
-  useEffect(() => saveToStorage(STORAGE_KEYS.completedIndoor, completedIndoorIds), [completedIndoorIds]);
-
-  const hourlyForecast = useMemo(() => {
-    if (dataState === 'preview') return getPreviewFixtureForecast(location);
-    if (dataState === 'live' && liveStatus === 'ready') return liveForecast;
-    return [];
-  }, [dataState, liveForecast, liveStatus, location]);
-
-  const retryLiveCheck = useCallback(() => {
-    setDataState('live');
-    setLiveRetryNonce((n) => n + 1);
-  }, []);
+  useEffect(
+    () => saveToStorage(STORAGE_KEYS.completedPlanner, completedPlannerIds),
+    [completedPlannerIds],
+  );
+  useEffect(
+    () => saveToStorage(STORAGE_KEYS.completedIndoor, completedIndoorIds),
+    [completedIndoorIds],
+  );
 
   const updateFamilyProfile = useCallback((next: FamilyProfile) => {
     setFamilyProfile({ ...next, updatedAt: new Date().toISOString() });
@@ -441,12 +244,6 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
     );
   }, []);
 
-  const activeReading = useMemo(() => {
-    if (dataState === 'preview') return getPreviewFixtureReading(location);
-    if (dataState === 'live' && liveStatus === 'ready') return liveReading;
-    return null;
-  }, [dataState, liveReading, liveStatus, location]);
-
   const notifications = useMemo<AppNotification[]>(() => {
     const items: AppNotification[] = [];
     const aqiVal = activeReading?.aqi.value ?? null;
@@ -474,10 +271,13 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
     });
   }, [notifications]);
 
-  const updateSettings = useCallback((next: AppSettings) => {
-    setSettings(next);
-    setDataState(next.dataModePreference === 'live' ? 'live' : 'preview');
-  }, []);
+  const updateSettings = useCallback(
+    (next: AppSettings) => {
+      setSettings(next);
+      setDataState(next.dataModePreference === 'live' ? 'live' : 'preview');
+    },
+    [setDataState],
+  );
 
   const resetAllLocalData = useCallback(() => {
     coordLookupSeqRef.current += 1;
@@ -487,11 +287,9 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
     setCompletedPlannerIds([]);
     setCompletedIndoorIds([]);
     setReadNotifIds([]);
-    setLiveError(null);
     setSettings(DEFAULT_SETTINGS);
-    setDataState(DEFAULT_SETTINGS.dataModePreference === 'live' ? 'live' : 'preview');
-    setLiveRetryNonce((n) => n + 1);
-  }, []);
+    resetSyncState(DEFAULT_SETTINGS.dataModePreference === 'live' ? 'live' : 'preview');
+  }, [resetSyncState]);
 
   const clearPersonalData = useCallback(() => {
     coordLookupSeqRef.current += 1;
@@ -502,11 +300,9 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
     setCompletedPlannerIds([]);
     setCompletedIndoorIds([]);
     setReadNotifIds([]);
-    setLiveError(null);
     setSettings(DEFAULT_SETTINGS);
-    setDataState(DEFAULT_SETTINGS.dataModePreference === 'live' ? 'live' : 'preview');
-    setLiveRetryNonce((n) => n + 1);
-  }, []);
+    resetSyncState(DEFAULT_SETTINGS.dataModePreference === 'live' ? 'live' : 'preview');
+  }, [resetSyncState]);
 
   const contextValue = useMemo<AppStateContextValue>(
     () => ({
@@ -514,25 +310,25 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
       setActivePage,
       location,
       setLocation,
-      availableLocations,
-      airLivePlaces,
-      placesLoading,
-      placesError,
-      refreshPlaces,
+      availableLocations: directory.availableLocations,
+      airLivePlaces: directory.airLivePlaces,
+      placesLoading: directory.placesLoading,
+      placesError: directory.placesError,
+      refreshPlaces: directory.refreshPlaces,
       selectLocationByCoordinates,
-      indiaRanking,
-      rankingOrder,
-      setRankingOrder,
-      rankingLoading,
-      rankingError,
+      indiaRanking: directory.indiaRanking,
+      rankingOrder: directory.rankingOrder,
+      setRankingOrder: directory.setRankingOrder,
+      rankingLoading: directory.rankingLoading,
+      rankingError: directory.rankingError,
       isOffline,
-      dataState,
-      setDataState,
-      liveStatus,
-      liveError,
-      retryLiveCheck,
-      currentReading: activeReading,
-      hourlyForecast,
+      dataState: liveSync.dataState,
+      setDataState: liveSync.setDataState,
+      liveStatus: liveSync.liveStatus,
+      liveError: liveSync.liveError,
+      retryLiveCheck: liveSync.retryLiveCheck,
+      currentReading: liveSync.activeReading,
+      hourlyForecast: liveSync.hourlyForecast,
       familyProfile,
       updateFamilyProfile,
       impactLogs,
@@ -554,23 +350,25 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
       activePage,
       location,
       setLocation,
-      availableLocations,
-      airLivePlaces,
-      placesLoading,
-      placesError,
-      refreshPlaces,
+      directory.availableLocations,
+      directory.airLivePlaces,
+      directory.placesLoading,
+      directory.placesError,
+      directory.refreshPlaces,
       selectLocationByCoordinates,
-      indiaRanking,
-      rankingOrder,
-      rankingLoading,
-      rankingError,
+      directory.indiaRanking,
+      directory.rankingOrder,
+      directory.setRankingOrder,
+      directory.rankingLoading,
+      directory.rankingError,
       isOffline,
-      dataState,
-      liveStatus,
-      liveError,
-      retryLiveCheck,
-      activeReading,
-      hourlyForecast,
+      liveSync.dataState,
+      liveSync.setDataState,
+      liveSync.liveStatus,
+      liveSync.liveError,
+      liveSync.retryLiveCheck,
+      liveSync.activeReading,
+      liveSync.hourlyForecast,
       familyProfile,
       updateFamilyProfile,
       impactLogs,

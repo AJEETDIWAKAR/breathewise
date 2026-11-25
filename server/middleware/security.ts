@@ -1,5 +1,13 @@
 import type { NextFunction, Request, Response } from 'express';
 
+function resolveForwardedProto(req: Request): string {
+  const forwarded = req.headers['x-forwarded-proto'];
+  if (typeof forwarded === 'string') {
+    return forwarded.split(',')[0].trim().toLowerCase();
+  }
+  return req.secure ? 'https' : 'http';
+}
+
 function isSameHostOrigin(origin: string, req: Request): boolean {
   try {
     const originUrl = new URL(origin);
@@ -13,13 +21,7 @@ function isSameHostOrigin(origin: string, req: Request): boolean {
     const requestHost = rawHost.trim().toLowerCase();
     if (!requestHost) return false;
 
-    const rawProto =
-      typeof req.headers['x-forwarded-proto'] === 'string'
-        ? req.headers['x-forwarded-proto'].split(',')[0].trim().toLowerCase()
-        : req.secure
-          ? 'https'
-          : 'http';
-
+    const rawProto = resolveForwardedProto(req);
     return originUrl.host.toLowerCase() === requestHost && originUrl.protocol === `${rawProto}:`;
   } catch {
     return false;
@@ -58,8 +60,8 @@ export function securityHeadersMiddleware(appUrl: string, extraAllowedOrigins: s
     const isProd = process.env.NODE_ENV === 'production';
     const scriptSrc = isProd ? "script-src 'self'" : "script-src 'self' 'unsafe-inline'";
     const connectSrc = isProd
-      ? "connect-src 'self'"
-      : "connect-src 'self' ws://localhost:* ws://127.0.0.1:*";
+      ? "connect-src 'self' https://airlive.tracsa.co.in https://air-quality-api.open-meteo.com"
+      : "connect-src 'self' https://airlive.tracsa.co.in https://air-quality-api.open-meteo.com ws://localhost:* ws://127.0.0.1:*";
     res.setHeader(
       'Content-Security-Policy',
       [

@@ -98,6 +98,25 @@ export const INDOOR_EVIDENCE_BOUNDARIES: EvidenceBoundaryRule[] = [
   },
 ];
 
+function resolveVentilationGuidance(params: {
+  severeActive: boolean;
+  estimatedNaqi: number;
+  goodThreshold: number;
+  moderateThreshold: number;
+}): string {
+  const { severeActive, estimatedNaqi, goodThreshold, moderateThreshold } = params;
+  if (severeActive) {
+    return 'Outdoor smog is currently severe. Keep exterior windows sealed except for brief 5–10 minute cross-ventilation if indoor cooking fumes or stuffiness accumulate.';
+  }
+  if (estimatedNaqi <= goodThreshold) {
+    return 'Open opposite windows for 20–30 minutes during this lower-PM2.5 interval to flush indoor CO2 and cooking fumes—keep interior doors open for cross-flow.';
+  }
+  if (estimatedNaqi <= moderateThreshold) {
+    return 'Brief 10–15 minute cross-ventilation is reasonable only if indoor air feels stuffy or smoky; avoid leaving roadside windows open all day.';
+  }
+  return 'Outdoor air remains Poor/Severe across available intervals. Keep windows sealed and rely on targeted exhaust and filtration.';
+}
+
 export function findBestVentilationWindow(
   hourly: HourlyForecastPoint[],
   reading: AirQualityReading | null = null,
@@ -127,21 +146,18 @@ export function findBestVentilationWindow(
   const goodThreshold = scale === 'US_AQI' ? 100 : 150;
   const moderateThreshold = scale === 'US_AQI' ? 150 : 250;
 
-  const guidance = severeActive
-    ? 'Outdoor smog is currently severe. Keep exterior windows sealed except for brief 5–10 minute cross-ventilation if indoor cooking fumes or stuffiness accumulate.'
-    : best.estimatedNaqi <= goodThreshold
-      ? 'Open opposite windows for 20–30 minutes during this lower-PM2.5 interval to flush indoor CO2 and cooking fumes—keep interior doors open for cross-flow.'
-      : best.estimatedNaqi <= moderateThreshold
-        ? 'Brief 10–15 minute cross-ventilation is reasonable only if indoor air feels stuffy or smoky; avoid leaving roadside windows open all day.'
-        : 'Outdoor air remains Poor/Severe across available intervals. Keep windows sealed and rely on targeted exhaust and filtration.';
-
   return {
     startLabel: best.hourLabel,
     endLabel: next.hourLabel,
     minPm25: best.pm25,
     minNaqi: best.estimatedNaqi,
     scale,
-    guidance,
+    guidance: resolveVentilationGuidance({
+      severeActive,
+      estimatedNaqi: best.estimatedNaqi,
+      goodThreshold,
+      moderateThreshold,
+    }),
   };
 }
 
@@ -177,7 +193,167 @@ function isOutdoorAirSeverelyPolluted(reading: AirQualityReading | null): boolea
 
 function isOutdoorAirGoodOrLow(reading: AirQualityReading | null): boolean {
   if (!reading || reading.aqi.value === null) return false;
-  return reading.aqi.scale === 'US_AQI' ? reading.aqi.value <= 100 : reading.aqi.value <= 100;
+  return reading.aqi.value <= 100;
+}
+
+function getHousingLabel(housing: FamilyProfile['homeEnvironment']['housingType']): string {
+  if (housing === 'high_traffic_roadside') return 'roadside exposure';
+  if (housing === 'independent_leaky') return 'drafty/unsealed frames';
+  return 'sealed apartment windows';
+}
+
+function getVentilationActionSummary(params: {
+  readingMissing: boolean;
+  severeOutdoor: boolean;
+  goodOutdoor: boolean;
+  ventWin: VentilationWindow | null;
+}): string {
+  const { readingMissing, severeOutdoor, goodOutdoor, ventWin } = params;
+  if (readingMissing) {
+    return 'Outdoor AQI is unavailable—avoid leaving windows wide open near traffic; air briefly only when cooking steam or CO2 builds up.';
+  }
+  if (severeOutdoor) {
+    return 'Keep exterior windows closed during outdoor smog peaks and seal obvious door/window gaps with weatherstripping or rolled damp towels.';
+  }
+  if (goodOutdoor) {
+    return 'Cross-ventilate for 20–30 minutes using opposite windows while outdoor air is relatively clean.';
+  }
+  if (ventWin) {
+    return `Target brief 10–15 minute cross-ventilation around ${ventWin.startLabel}–${ventWin.endLabel} when outdoor PM2.5 is lowest, unless indoor smoke needs immediate clearing.`;
+  }
+  return 'No hourly outdoor curve is available—avoid assuming afternoon hours are cleaner; ventilate briefly only to clear indoor cooking fumes.';
+}
+
+function buildVentilationTopic(
+  profile: FamilyProfile,
+  reading: AirQualityReading | null,
+  hourly: HourlyForecastPoint[],
+  totalMembers: number,
+): TailoredIndoorTopic {
+  const housing = profile.homeEnvironment.housingType;
+  const ventWin = findBestVentilationWindow(hourly, reading);
+  const roadsideHint =
+    housing === 'high_traffic_roadside'
+      ? ' (prioritize courtyard/rear-facing windows over road-facing ones)'
+      : '';
+
+  return {
+    id: 'ventilation',
+    topicNumber: 1,
+    topicLabel: '1. Ventilation Timing & Source Balance',
+    costTier: 'low_cost',
+    estimatedCostInr: '₹0 – ₹400',
+    actionSummary: getVentilationActionSummary({
+      readingMissing: !reading || reading.aqi.value === null,
+      severeOutdoor: isOutdoorAirSeverelyPolluted(reading),
+      goodOutdoor: isOutdoorAirGoodOrLow(reading),
+      ventWin,
+    }),
+    tailoredReason:
+      'Effective ventilation balances outdoor particulate entry against indoor CO2, moisture, and cooking pollutants—opening windows helps indoors only when outdoor air is cleaner than indoor air.',
+    householdFitNote: `Tailored for ${totalMembers} household member(s) with ${getHousingLabel(housing)}${roadsideHint}.`,
+    caveat:
+      'Sealed bedrooms with multiple people accumulate CO2 overnight; briefly flush air when outdoor readings allow or keep trickle airflow away from traffic.',
+  };
+}
+
+function getCookingActionSummary(
+  fuel: FamilyProfile['homeEnvironment']['cookingFuel'],
+  exhaust: FamilyProfile['homeEnvironment']['kitchenExhaust'],
+): string {
+  if (fuel === 'biomass_solid') {
+    return 'Avoid indoor solid/biomass cooking wherever possible; move combustion outdoors with cross-draft or transition toward LPG/induction.';
+  }
+  if (exhaust === 'chimney_or_exhaust') {
+    return 'Switch on your kitchen chimney/exhaust 2 minutes before lighting the stove, cover pans with lids during boiling/tadka, and run exhaust 15 minutes after.';
+  }
+  if (exhaust === 'window_only') {
+    return 'Cook on rear burners closest to the kitchen window, place a regular fan pointing outward to push smoke out, and keep lids on frying/tempering pans.';
+  }
+  return 'Because the kitchen lacks direct exhaust, keep kitchen-to-bedroom doors closed while cooking, cover pots, and minimize high-heat smoke/charring.';
+}
+
+function buildCookingTopic(profile: FamilyProfile): TailoredIndoorTopic {
+  const { budgetTier, kitchenExhaust, cookingFuel } = profile.homeEnvironment;
+  const needsExhaustUpgrade = kitchenExhaust === 'none' && budgetTier !== 'low';
+
+  return {
+    id: 'cooking_smoke',
+    topicNumber: 2,
+    topicLabel: '2. Cooking Smoke & Kitchen Fume Control',
+    costTier: needsExhaustUpgrade ? 'medium_cost' : 'low_cost',
+    estimatedCostInr: needsExhaustUpgrade ? '₹1,800 – ₹4,500 (exhaust fan)' : '₹0',
+    actionSummary: getCookingActionSummary(cookingFuel, kitchenExhaust),
+    tailoredReason:
+      'High-heat oil tempering (tadka), frying, and gas/biomass flames create intense short-term indoor ultrafine particulate and NO2 spikes that linger in living spaces.',
+    householdFitNote: `Configured for ${cookingFuel.toUpperCase()} cooking with "${kitchenExhaust.replace(/_/g, ' ')}" kitchen ventilation.`,
+    caveat:
+      'Even an electric chimney requires clean grease baffle filters every 2–4 weeks to maintain outward airflow.',
+  };
+}
+
+function buildPurifierTopic(
+  profile: FamilyProfile,
+  cadr: CadrCalculation,
+): TailoredIndoorTopic {
+  const { roomAreaSqFt, budgetTier, hasAirPurifier } = profile.homeEnvironment;
+  let costTier: CostGuideTier = 'higher_cost';
+  if (hasAirPurifier || budgetTier === 'low') {
+    costTier = 'medium_cost';
+  }
+
+  let actionSummary = `Select a certified True HEPA (H13) unit delivering at least ${cadr.recommendedMinCadrM3h} m³/h (${cadr.recommendedCfm} CFM) CADR for your ${roomAreaSqFt} sq ft room (5 ACH target). Avoid ionizers that emit ozone.`;
+  if (hasAirPurifier) {
+    actionSummary = `Keep your purifier in the primary sleeping room (${roomAreaSqFt} sq ft) on continuous medium/auto speed with doors closed and any ionizer/UV-ozone switch OFF. Vacuum the mesh pre-filter every 2 weeks and replace the HEPA cartridge every 6–12 months.`;
+  } else if (budgetTier === 'low') {
+    actionSummary = `A retail purifier (${cadr.estimatedFilterBudgetInr}) exceeds a low monthly budget; if purchasing later, choose a simple True HEPA (H13) unit sized for >= ${cadr.recommendedMinCadrM3h} m³/h (${cadr.recommendedCfm} CFM) CADR without ionizer features.`;
+  }
+
+  return {
+    id: 'purifier_maintenance',
+    topicNumber: 5,
+    topicLabel: '5. Air Purifier Selection & Maintenance',
+    costTier,
+    estimatedCostInr: hasAirPurifier
+      ? '₹1,800 – ₹4,500 / yr (replacement HEPA)'
+      : cadr.estimatedFilterBudgetInr,
+    actionSummary,
+    tailoredReason:
+      'Air purifiers only sustain clean bedroom air when CADR matches room volume and clogged pre-filters/HEPA media are cleaned or replaced on schedule.',
+    householdFitNote: `Sized for ${roomAreaSqFt} sq ft (~${cadr.roomVolumeM3} m³ volume) at 5 Air Changes/Hour.`,
+    caveat:
+      'Never wash disposable paper HEPA pleats with water (only vacuum/rinse the outer mesh pre-filter); water ruins electrostatic fiber capture.',
+  };
+}
+
+function buildFiltrationTopic(
+  profile: FamilyProfile,
+  cadr: CadrCalculation,
+): TailoredIndoorTopic {
+  const { budgetTier, hasAirPurifier } = profile.homeEnvironment;
+  let estimatedCostInr = cadr.estimatedFilterBudgetInr;
+  if (budgetTier === 'low') {
+    estimatedCostInr = '₹1,800 – ₹3,200 (DIY MERV-13 fan box)';
+  } else if (budgetTier === 'moderate') {
+    estimatedCostInr = '₹2,500 – ₹8,500';
+  }
+
+  return {
+    id: 'filtration',
+    topicNumber: 6,
+    topicLabel: '6. Practical Filtration Options by Budget',
+    costTier: budgetTier === 'flexible' ? 'higher_cost' : 'medium_cost',
+    estimatedCostInr,
+    actionSummary:
+      budgetTier === 'low'
+        ? 'For bedroom PM2.5 relief on a tight budget, tape a pleated MERV-13 / E11 replacement filter snugly to the intake side of a standard box/table fan (keep motor vents unobstructed and run only while attended).'
+        : 'Focus filtration in one closed "clean-air sleeping room" overnight rather than running small purifiers in open living areas with wide-open balcony doors.',
+    tailoredReason:
+      'True HEPA (H13) and MERV-13 pleated media physically trap fine PM2.5 particles; houseplants cannot substitute for mechanical airflow filtration.',
+    householdFitNote: `Aligned with "${budgetTier}" monthly budget tier and ${hasAirPurifier ? 'existing purifier ownership' : 'no current retail purifier'}.`,
+    caveat:
+      'DIY fan-filter setups must never block motor cooling airflow or be left running unattended with frayed cords.',
+  };
 }
 
 export function generateTailoredIndoorGuide(
@@ -188,66 +364,11 @@ export function generateTailoredIndoorGuide(
   const totalMembers =
     profile.members.adults + profile.members.children + profile.members.seniors;
   const cadr = calculateCadr(profile.homeEnvironment.roomAreaSqFt);
-  const budget = profile.homeEnvironment.budgetTier;
   const housing = profile.homeEnvironment.housingType;
-  const exhaust = profile.homeEnvironment.kitchenExhaust;
-  const fuel = profile.homeEnvironment.cookingFuel;
-  const hasPurifier = profile.homeEnvironment.hasAirPurifier;
-  const ventWin = findBestVentilationWindow(hourly, reading);
-  const severeOutdoor = isOutdoorAirSeverelyPolluted(reading);
-  const goodOutdoor = isOutdoorAirGoodOrLow(reading);
-  const readingMissing = !reading || reading.aqi.value === null;
-
-  const housingLabel =
-    housing === 'high_traffic_roadside'
-      ? 'roadside exposure'
-      : housing === 'independent_leaky'
-        ? 'drafty/unsealed frames'
-        : 'sealed apartment windows';
 
   return [
-    {
-      id: 'ventilation',
-      topicNumber: 1,
-      topicLabel: '1. Ventilation Timing & Source Balance',
-      costTier: housing === 'independent_leaky' ? 'low_cost' : 'low_cost',
-      estimatedCostInr: '₹0 – ₹400',
-      actionSummary: readingMissing
-        ? 'Outdoor AQI is unavailable—avoid leaving windows wide open near traffic; air briefly only when cooking steam or CO2 builds up.'
-        : severeOutdoor
-          ? 'Keep exterior windows closed during outdoor smog peaks and seal obvious door/window gaps with weatherstripping or rolled damp towels.'
-          : goodOutdoor
-            ? 'Cross-ventilate for 20–30 minutes using opposite windows while outdoor air is relatively clean.'
-            : ventWin
-              ? `Target brief 10–15 minute cross-ventilation around ${ventWin.startLabel}–${ventWin.endLabel} when outdoor PM2.5 is lowest, unless indoor smoke needs immediate clearing.`
-              : 'No hourly outdoor curve is available—avoid assuming afternoon hours are cleaner; ventilate briefly only to clear indoor cooking fumes.',
-      tailoredReason:
-        'Effective ventilation balances outdoor particulate entry against indoor CO2, moisture, and cooking pollutants—opening windows helps indoors only when outdoor air is cleaner than indoor air.',
-      householdFitNote: `Tailored for ${totalMembers} household member(s) with ${housingLabel}${housing === 'high_traffic_roadside' ? ' (prioritize courtyard/rear-facing windows over road-facing ones)' : ''}.`,
-      caveat:
-        'Sealed bedrooms with multiple people accumulate CO2 overnight; briefly flush air when outdoor readings allow or keep trickle airflow away from traffic.',
-    },
-    {
-      id: 'cooking_smoke',
-      topicNumber: 2,
-      topicLabel: '2. Cooking Smoke & Kitchen Fume Control',
-      costTier: exhaust === 'none' && budget !== 'low' ? 'medium_cost' : 'low_cost',
-      estimatedCostInr:
-        exhaust === 'none' && budget !== 'low' ? '₹1,800 – ₹4,500 (exhaust fan)' : '₹0',
-      actionSummary:
-        fuel === 'biomass_solid'
-          ? 'Avoid indoor solid/biomass cooking wherever possible; move combustion outdoors with cross-draft or transition toward LPG/induction.'
-          : exhaust === 'chimney_or_exhaust'
-            ? 'Switch on your kitchen chimney/exhaust 2 minutes before lighting the stove, cover pans with lids during boiling/tadka, and run exhaust 15 minutes after.'
-            : exhaust === 'window_only'
-              ? 'Cook on rear burners closest to the kitchen window, place a regular fan pointing outward to push smoke out, and keep lids on frying/tempering pans.'
-              : 'Because the kitchen lacks direct exhaust, keep kitchen-to-bedroom doors closed while cooking, cover pots, and minimize high-heat smoke/charring.',
-      tailoredReason:
-        'High-heat oil tempering (tadka), frying, and gas/biomass flames create intense short-term indoor ultrafine particulate and NO2 spikes that linger in living spaces.',
-      householdFitNote: `Configured for ${fuel.toUpperCase()} cooking with "${exhaust.replace(/_/g, ' ')}" kitchen ventilation.`,
-      caveat:
-        'Even an electric chimney requires clean grease baffle filters every 2–4 weeks to maintain outward airflow.',
-    },
+    buildVentilationTopic(profile, reading, hourly, totalMembers),
+    buildCookingTopic(profile),
     {
       id: 'dust',
       topicNumber: 3,
@@ -281,46 +402,8 @@ export function generateTailoredIndoorGuide(
       caveat:
         'Never burn herbs, camphor, or incense believing it purifies indoor air—combustion always adds particulate load.',
     },
-    {
-      id: 'purifier_maintenance',
-      topicNumber: 5,
-      topicLabel: '5. Air Purifier Selection & Maintenance',
-      costTier: hasPurifier ? 'medium_cost' : budget === 'low' ? 'medium_cost' : 'higher_cost',
-      estimatedCostInr: hasPurifier
-        ? '₹1,800 – ₹4,500 / yr (replacement HEPA)'
-        : cadr.estimatedFilterBudgetInr,
-      actionSummary: hasPurifier
-        ? `Keep your purifier in the primary sleeping room (${profile.homeEnvironment.roomAreaSqFt} sq ft) on continuous medium/auto speed with doors closed and any ionizer/UV-ozone switch OFF. Vacuum the mesh pre-filter every 2 weeks and replace the HEPA cartridge every 6–12 months.`
-        : budget === 'low'
-          ? `A retail purifier (${cadr.estimatedFilterBudgetInr}) exceeds a low monthly budget; if purchasing later, choose a simple True HEPA (H13) unit sized for >= ${cadr.recommendedMinCadrM3h} m³/h (${cadr.recommendedCfm} CFM) CADR without ionizer features.`
-          : `Select a certified True HEPA (H13) unit delivering at least ${cadr.recommendedMinCadrM3h} m³/h (${cadr.recommendedCfm} CFM) CADR for your ${profile.homeEnvironment.roomAreaSqFt} sq ft room (5 ACH target). Avoid ionizers that emit ozone.`,
-      tailoredReason:
-        'Air purifiers only sustain clean bedroom air when CADR matches room volume and clogged pre-filters/HEPA media are cleaned or replaced on schedule.',
-      householdFitNote: `Sized for ${profile.homeEnvironment.roomAreaSqFt} sq ft (~${cadr.roomVolumeM3} m³ volume) at 5 Air Changes/Hour.`,
-      caveat:
-        'Never wash disposable paper HEPA pleats with water (only vacuum/rinse the outer mesh pre-filter); water ruins electrostatic fiber capture.',
-    },
-    {
-      id: 'filtration',
-      topicNumber: 6,
-      topicLabel: '6. Practical Filtration Options by Budget',
-      costTier: budget === 'flexible' ? 'higher_cost' : 'medium_cost',
-      estimatedCostInr:
-        budget === 'low'
-          ? '₹1,800 – ₹3,200 (DIY MERV-13 fan box)'
-          : budget === 'moderate'
-            ? '₹2,500 – ₹8,500'
-            : cadr.estimatedFilterBudgetInr,
-      actionSummary:
-        budget === 'low'
-          ? 'For bedroom PM2.5 relief on a tight budget, tape a pleated MERV-13 / E11 replacement filter snugly to the intake side of a standard box/table fan (keep motor vents unobstructed and run only while attended).'
-          : 'Focus filtration in one closed "clean-air sleeping room" overnight rather than running small purifiers in open living areas with wide-open balcony doors.',
-      tailoredReason:
-        'True HEPA (H13) and MERV-13 pleated media physically trap fine PM2.5 particles; houseplants cannot substitute for mechanical airflow filtration.',
-      householdFitNote: `Aligned with "${budget}" monthly budget tier and ${hasPurifier ? 'existing purifier ownership' : 'no current retail purifier'}.`,
-      caveat:
-        'DIY fan-filter setups must never block motor cooling airflow or be left running unattended with frayed cords.',
-    },
+    buildPurifierTopic(profile, cadr),
+    buildFiltrationTopic(profile, cadr),
     {
       id: 'indoor_activity',
       topicNumber: 7,
@@ -430,4 +513,3 @@ export const INDOOR_MEASURES: IndoorMeasure[] = [
     estimatedCostInr: '₹7,000 – ₹18,000',
   },
 ];
-

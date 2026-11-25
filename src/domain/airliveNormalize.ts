@@ -3,7 +3,6 @@ import type {
   FreshnessStatus,
   HourlyForecastPoint,
   LocationOption,
-  PollutantKey,
   PollutantMetric,
   UsAqiCategory,
 } from '../types/breathewise.ts';
@@ -180,6 +179,102 @@ export function mapAirLivePlaceSummary(
   };
 }
 
+function resolveStationName(
+  placeName: string,
+  isGroundStation: boolean,
+  stationsCount: number | null,
+): string {
+  if (!isGroundStation) {
+    return `${placeName} (Atmospheric model estimate)`;
+  }
+  if (stationsCount === null) {
+    return `${placeName} (Ground stations)`;
+  }
+  return `${placeName} (${stationsCount} ground station${stationsCount === 1 ? '' : 's'})`;
+}
+
+function buildPm25Pollutant(
+  validPm25: number | null,
+  validUsAqi: number | null,
+): PollutantMetric & { status: 'measured' | 'unavailable' } {
+  if (validPm25 !== null) {
+    return {
+      key: 'pm25',
+      label: 'PM2.5',
+      value: validPm25,
+      unit: 'µg/m³',
+      subIndex: validUsAqi,
+      safeReference: PM25_SAFE_REFERENCE,
+      status: 'measured',
+    };
+  }
+  return {
+    key: 'pm25',
+    label: 'PM2.5',
+    value: null,
+    unit: 'µg/m³',
+    subIndex: null,
+    safeReference: PM25_SAFE_REFERENCE,
+    status: 'unavailable',
+  };
+}
+
+function buildAirLiveLocation(
+  item: RawAirLivePlaceInput,
+  options: { distanceKm?: number; stateFallback?: string },
+): AirQualityReading['location'] {
+  return {
+    id: item.slug,
+    slug: item.slug,
+    name: item.name,
+    city: item.name,
+    state: item.countryName || item.country || options.stateFallback || '',
+    country: item.country ?? '',
+    countryName: item.countryName ?? item.country ?? '',
+    kind: item.kind ?? 'city',
+    lat: item.lat,
+    lon: item.lon,
+    ...(options.distanceKm !== undefined ? { distanceKm: options.distanceKm } : {}),
+  };
+}
+
+function buildAirLiveProvenance(params: {
+  item: RawAirLivePlaceInput;
+  isGroundStation: boolean;
+  stationsCount: number | null;
+  staleness: ReturnType<typeof evaluateStaleness>;
+  cacheHit?: boolean;
+}): AirQualityReading['provenance'] {
+  const { item, isGroundStation, stationsCount, staleness, cacheHit } = params;
+  const stationCountSuffix = stationsCount !== null ? ` across ${stationsCount} station(s)` : '';
+
+  return {
+    providerId: 'airlive',
+    providerName: 'AirLive',
+    stationName: resolveStationName(item.name, isGroundStation, stationsCount),
+    measurementType: isGroundStation ? 'ground_station' : 'modeled_forecast',
+    sourceLabel: isGroundStation
+      ? 'Ground Stations'
+      : 'Atmospheric Model (Model-based estimate)',
+    stationsUsed: stationsCount,
+    observedAt: item.updated ?? null,
+    fetchedAt: new Date().toISOString(),
+    isStale: staleness.isStale,
+    freshnessStatus: staleness.freshnessStatus,
+    staleReason: staleness.staleReason,
+    spatialResolution: isGroundStation
+      ? `${stationsCount ?? 'Local'} Ground Station(s)`
+      : 'Gridded Atmospheric Model Estimate',
+    attribution: item.attribution || AIRLIVE_DEFAULT_ATTRIBUTION,
+    attributionUrl: AIRLIVE_BASE_URL,
+    placeUrl: sanitizeHttpUrl(item.url),
+    coverageLimitations: isGroundStation
+      ? `Direct ground-station aggregation${stationCountSuffix}; AirLive provides US AQI and PM2.5 at this endpoint.`
+      : 'Model-based atmospheric estimate (not a direct local ground-station measurement); local traffic hotspots may be higher.',
+    ...(cacheHit !== undefined ? { cacheHit } : {}),
+  };
+}
+
 export function buildAirLiveReading(
   item: RawAirLivePlaceInput,
   options: { distanceKm?: number; cacheHit?: boolean; stateFallback?: string } = {},
@@ -200,57 +295,8 @@ export function buildAirLiveReading(
       ? item.stationsUsed
       : null;
 
-  const measurementType = isGroundStation ? 'ground_station' : 'modeled_forecast';
-  const sourceLabel = isGroundStation
-    ? 'Ground Stations'
-    : 'Atmospheric Model (Model-based estimate)';
-  const stationName = isGroundStation
-    ? stationsCount !== null
-      ? `${item.name} (${stationsCount} ground station${stationsCount === 1 ? '' : 's'})`
-      : `${item.name} (Ground stations)`
-    : `${item.name} (Atmospheric model estimate)`;
-
-  const pm25Pollutant: PollutantMetric & { status: 'measured' | 'unavailable' } =
-    validPm25 !== null
-      ? {
-          key: 'pm25',
-          label: 'PM2.5',
-          value: validPm25,
-          unit: 'µg/m³',
-          subIndex: validUsAqi,
-          safeReference: PM25_SAFE_REFERENCE,
-          status: 'measured',
-        }
-      : {
-          key: 'pm25',
-          label: 'PM2.5',
-          value: null,
-          unit: 'µg/m³',
-          subIndex: null,
-          safeReference: PM25_SAFE_REFERENCE,
-          status: 'unavailable',
-        };
-
-  const missingPollutants: PollutantKey[] = validPm25 === null ? ['pm25'] : [];
-
-  const coverageLimitations = isGroundStation
-    ? `Direct ground-station aggregation${stationsCount !== null ? ` across ${stationsCount} station(s)` : ''}; AirLive provides US AQI and PM2.5 at this endpoint.`
-    : 'Model-based atmospheric estimate (not a direct local ground-station measurement); local traffic hotspots may be higher.';
-
   return {
-    location: {
-      id: item.slug,
-      slug: item.slug,
-      name: item.name,
-      city: item.name,
-      state: item.countryName || item.country || options.stateFallback || '',
-      country: item.country ?? '',
-      countryName: item.countryName ?? item.country ?? '',
-      kind: item.kind ?? 'city',
-      lat: item.lat,
-      lon: item.lon,
-      ...(options.distanceKm !== undefined ? { distanceKm: options.distanceKm } : {}),
-    },
+    location: buildAirLiveLocation(item, options),
     aqi: {
       value: validUsAqi,
       scale: 'US_AQI',
@@ -259,29 +305,15 @@ export function buildAirLiveReading(
       modelUsAqi: parseNonNegativeRounded(item.modelUsAqi),
       stationToModelRatio: parseNonNegativeFixed(item.stationToModelRatio, 3),
     },
-    pollutants: [pm25Pollutant],
-    missingPollutants,
-    provenance: {
-      providerId: 'airlive',
-      providerName: 'AirLive',
-      stationName,
-      measurementType,
-      sourceLabel,
-      stationsUsed: stationsCount,
-      observedAt: item.updated ?? null,
-      fetchedAt: new Date().toISOString(),
-      isStale: staleness.isStale,
-      freshnessStatus: staleness.freshnessStatus,
-      staleReason: staleness.staleReason,
-      spatialResolution: isGroundStation
-        ? `${stationsCount ?? 'Local'} Ground Station(s)`
-        : 'Gridded Atmospheric Model Estimate',
-      attribution: item.attribution || AIRLIVE_DEFAULT_ATTRIBUTION,
-      attributionUrl: AIRLIVE_BASE_URL,
-      placeUrl: sanitizeHttpUrl(item.url),
-      coverageLimitations,
-      ...(options.cacheHit !== undefined ? { cacheHit: options.cacheHit } : {}),
-    },
+    pollutants: [buildPm25Pollutant(validPm25, validUsAqi)],
+    missingPollutants: validPm25 === null ? ['pm25'] : [],
+    provenance: buildAirLiveProvenance({
+      item,
+      isGroundStation,
+      stationsCount,
+      staleness,
+      cacheHit: options.cacheHit,
+    }),
   };
 }
 

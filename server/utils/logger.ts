@@ -25,8 +25,14 @@ export function logWarn(scope: string, message: string, meta?: Record<string, un
   console.warn(`[BreatheWise:${scope}] ${redactSensitiveText(message)}${safeMeta ? ` ${safeMeta}` : ''}`);
 }
 
+function formatErrorForLog(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (err !== undefined) return String(err);
+  return '';
+}
+
 export function logError(scope: string, message: string, err?: unknown): void {
-  const rawErrMsg = err instanceof Error ? err.message : err !== undefined ? String(err) : '';
+  const rawErrMsg = formatErrorForLog(err);
   const errMsg = rawErrMsg ? redactSensitiveText(rawErrMsg) : '';
   console.error(`[BreatheWise:${scope}] ${redactSensitiveText(message)}${errMsg ? ` :: ${errMsg}` : ''}`);
 }

@@ -1,16 +1,14 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { ExternalLink, LocateFixed, MapPin, Search } from 'lucide-react';
-import { getUsAqiVisualTokens, US_AQI_SCALE_GUIDE } from '../../domain/usAqi';
+import { LocateFixed, MapPin, Search } from 'lucide-react';
 import { useDeviceGeolocation } from '../../hooks/useDeviceGeolocation';
 import { searchLocationsApi } from '../../services/airQualityApi';
 import { useAppState } from '../../state/AppStateContext';
 import type { LocationOption } from '../../types/breathewise';
+import { AqiScaleGuideCard, IndiaRankingCard } from '../air-quality/AirQualityReferenceCards';
 import { AqiIndicator } from '../ui/AqiIndicator';
 import { Button } from '../ui/Button';
 import { Card, CardHeader } from '../ui/Card';
 import { HourlyTrendChart } from '../ui/HourlyTrendChart';
-import { PollutionStatusBadge } from '../ui/PollutionStatusBadge';
-import { SegmentedTabs } from '../ui/Selector';
 import { EmptyState, LoadingSkeleton } from '../ui/States';
 
 export function AirQualityPage() {
@@ -118,7 +116,14 @@ export function AirQualityPage() {
     clearGeoError();
     const lat = Number(manualLat.trim());
     const lon = Number(manualLon.trim());
-    if (!Number.isFinite(lat) || lat < -90 || lat > 90 || !Number.isFinite(lon) || lon < -180 || lon > 180) {
+    if (
+      !Number.isFinite(lat) ||
+      lat < -90 ||
+      lat > 90 ||
+      !Number.isFinite(lon) ||
+      lon < -180 ||
+      lon > 180
+    ) {
       setSearchError('Enter valid coordinates: latitude (-90 to 90) and longitude (-180 to 180).');
       return;
     }
@@ -231,7 +236,8 @@ export function AirQualityPage() {
         )}
 
         <p className="mt-2 text-xs text-slate-600">
-          Privacy: Location inputs or optional browser geolocation are used solely to find the nearest AirLive monitoring station and modeled hourly trend.
+          Privacy: Location inputs or optional browser geolocation are used solely to find the nearest
+          AirLive monitoring station and modeled hourly trend.
         </p>
 
         {displayedError && (
@@ -261,9 +267,7 @@ export function AirQualityPage() {
                       <span className="text-xs font-mono text-slate-600">({loc.kind})</span>
                     )}
                   </span>
-                  <span className="text-xs font-mono tabular-nums text-slate-600">
-                    {loc.slug}
-                  </span>
+                  <span className="text-xs font-mono tabular-nums text-slate-600">{loc.slug}</span>
                 </button>
               </li>
             ))}
@@ -311,7 +315,9 @@ export function AirQualityPage() {
                 <thead>
                   <tr className="border-b border-slate-200 text-xs text-slate-600">
                     <th scope="col" className="py-2.5 pr-4 font-semibold">Pollutant</th>
-                    <th scope="col" className="py-2.5 px-4 font-semibold text-right">Concentration</th>
+                    <th scope="col" className="py-2.5 px-4 font-semibold text-right">
+                      Concentration
+                    </th>
                     <th scope="col" className="py-2.5 px-4 font-semibold text-right">
                       {currentReading.aqi.scale === 'US_AQI' ? 'US AQI' : 'Sub-Index'}
                     </th>
@@ -330,7 +336,13 @@ export function AirQualityPage() {
                         )}
                       </td>
                       <td className="py-3 px-4 text-right font-mono tabular-nums font-semibold text-teal-800">
-                        {p.subIndex !== null ? p.subIndex : <span className="text-slate-600" aria-label="Not applicable">—</span>}
+                        {p.subIndex !== null ? (
+                          p.subIndex
+                        ) : (
+                          <span className="text-slate-600" aria-label="Not applicable">
+                            —
+                          </span>
+                        )}
                       </td>
                       <td className="py-3 pl-4 text-slate-600">{p.safeReference}</td>
                     </tr>
@@ -356,152 +368,17 @@ export function AirQualityPage() {
         </>
       )}
 
-      {/* India City Ranking Table via AirLive /api/v1/ranking */}
-      <Card>
-        <CardHeader
-          title={
-            rankingOrder === 'best'
-              ? 'Cleanest Cities in India Right Now'
-              : 'Most Polluted Cities in India Right Now'
-          }
-          subtitle="Live top-10 ranking from AirLive (click any city to inspect its telemetry)"
-          action={
-            <div className="flex flex-wrap items-center gap-3">
-              <SegmentedTabs
-                ariaLabel="India city ranking sort order"
-                value={rankingOrder}
-                onChange={setRankingOrder}
-                options={[
-                  { value: 'worst', label: 'Most Polluted' },
-                  { value: 'best', label: 'Cleanest Cities' },
-                ]}
-              />
-              <a
-                href="https://airlive.tracsa.co.in"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1 min-h-6 px-1 text-xs font-medium text-teal-800 hover:underline"
-              >
-                <span>AirLive Ranking</span>
-                <ExternalLink className="w-3.5 h-3.5" aria-hidden="true" />
-              </a>
-            </div>
-          }
-        />
-        {rankingLoading ? (
-          <LoadingSkeleton rows={3} />
-        ) : rankingError ? (
-          <p className="text-sm text-amber-800 py-4">{rankingError}</p>
-        ) : indiaRanking.length === 0 ? (
-          <p className="text-sm text-slate-600 py-4">No city ranking entries available right now.</p>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse text-sm">
-              <thead>
-                <tr className="border-b border-slate-200 text-xs text-slate-600">
-                  <th scope="col" className="py-2.5 pr-3 font-semibold">#</th>
-                  <th scope="col" className="py-2.5 px-3 font-semibold">City</th>
-                  <th scope="col" className="py-2.5 px-3 font-semibold text-right">US AQI</th>
-                  <th scope="col" className="py-2.5 px-3 font-semibold">Category</th>
-                  <th scope="col" className="py-2.5 px-3 font-semibold text-right">PM2.5</th>
-                  <th scope="col" className="py-2.5 px-3 font-semibold">Source</th>
-                  <th scope="col" className="py-2.5 pl-3 font-semibold text-right">Action</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {indiaRanking.map((item) => {
-                  const isCurrent = item.slug === activeLocation.slug;
-                  return (
-                    <tr key={item.slug} className={isCurrent ? 'bg-teal-50/50' : 'hover:bg-slate-50'}>
-                      <td className="py-2.5 pr-3 font-mono text-slate-600">{item.rank}</td>
-                      <td className="py-2.5 px-3 font-medium text-slate-900">
-                        {item.name}
-                        <span className="ml-1.5 text-xs text-slate-600 font-normal">
-                          ({item.countryName || item.country})
-                        </span>
-                      </td>
-                      <td className="py-2.5 px-3 text-right font-mono tabular-nums font-semibold text-slate-900">
-                        {item.usAqi !== null ? item.usAqi : 'N/A'}
-                      </td>
-                      <td className="py-2.5 px-3">
-                        <PollutionStatusBadge category={item.category} scale="US_AQI" compact />
-                      </td>
-                      <td className="py-2.5 px-3 text-right font-mono tabular-nums text-slate-700">
-                        {item.pm25 !== null ? `${item.pm25} µg/m³` : 'Unavailable'}
-                      </td>
-                      <td className="py-2.5 px-3 text-xs text-slate-600">
-                        {item.measurementType === 'ground_station'
-                          ? `Ground Stations (${item.stationsUsed ?? '?'})`
-                          : 'Atmospheric Model'}
-                      </td>
-                      <td className="py-2.5 pl-3 text-right">
-                        <Button
-                          variant={isCurrent ? 'secondary' : 'ghost'}
-                          size="sm"
-                          onClick={() =>
-                            handlePickLocation({
-                              id: item.slug,
-                              slug: item.slug,
-                              name: item.name,
-                              city: item.name,
-                              state: item.countryName || 'India',
-                              country: item.country,
-                              countryName: item.countryName,
-                              kind: item.kind,
-                              lat: item.lat,
-                              lon: item.lon,
-                            })
-                          }
-                        >
-                          {isCurrent ? 'Selected' : 'View'}
-                        </Button>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </Card>
+      <IndiaRankingCard
+        indiaRanking={indiaRanking}
+        rankingOrder={rankingOrder}
+        onChangeOrder={setRankingOrder}
+        rankingLoading={rankingLoading}
+        rankingError={rankingError}
+        activeLocationSlug={activeLocation.slug}
+        onSelectLocation={handlePickLocation}
+      />
 
-      {/* US AQI 6-Band Reference Guide */}
-      <Card>
-        <CardHeader
-          title="US AQI 6-Band Reference Scale"
-          subtitle="Standard US EPA AQI breakpoints used for all AirLive measurements"
-          action={
-            <Button variant="ghost" size="sm" onClick={retryLiveCheck}>
-              {dataState === 'live' ? 'Refresh Live AirLive' : 'Use Live AirLive'}
-            </Button>
-          }
-        />
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse text-sm">
-            <thead>
-              <tr className="border-b border-slate-200 text-xs text-slate-600">
-                <th scope="col" className="py-2.5 pr-4 font-semibold">Category</th>
-                <th scope="col" className="py-2.5 px-4 font-semibold">US AQI Range</th>
-                <th scope="col" className="py-2.5 pl-4 font-semibold">Health Guidance</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {US_AQI_SCALE_GUIDE.map((row) => {
-                const tokens = getUsAqiVisualTokens(row.category);
-                return (
-                  <tr key={row.category}>
-                    <td className="py-3 pr-4">
-                      <PollutionStatusBadge category={row.category} scale="US_AQI" compact />
-                    </td>
-                    <td className="py-3 px-4 font-mono tabular-nums text-slate-800">{row.range}</td>
-                    <td className="py-3 pl-4 text-slate-600">{tokens.healthSummary}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </Card>
+      <AqiScaleGuideCard dataState={dataState} onRetryLiveCheck={retryLiveCheck} />
     </div>
   );
 }

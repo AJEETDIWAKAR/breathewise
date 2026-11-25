@@ -1,8 +1,9 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useState, type FormEvent } from 'react';
 import { ArrowRight, Check } from 'lucide-react';
 import { useAutoClearState } from '../../hooks/useAutoClearTimer';
 import { useAppState } from '../../state/AppStateContext';
-import { validateFamilyProfile, type FamilyProfile } from '../../types/breathewise';
+import { validateFamilyProfile } from '../../domain/profileValidators';
+import type { FamilyProfile } from '../../types/breathewise';
 import { parseBoundedInt } from '../../utils/number';
 import { Button } from '../ui/Button';
 import { Card, CardHeader } from '../ui/Card';
@@ -11,16 +12,14 @@ import { Selector } from '../ui/Selector';
 
 export function FamilyPage() {
   const { familyProfile, updateFamilyProfile, setActivePage } = useAppState();
-  const [draft, setDraft] = useState<FamilyProfile>(familyProfile);
+  const [draftState, setDraftState] = useState<{ base: FamilyProfile; value: FamilyProfile } | null>(
+    null,
+  );
+  const draft = draftState && draftState.base === familyProfile ? draftState.value : familyProfile;
+  const setDraft = (next: FamilyProfile) => setDraftState({ base: familyProfile, value: next });
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [householdError, setHouseholdError] = useState<string | null>(null);
   const [savedBanner, showSavedBanner, clearSavedBanner] = useAutoClearState(false, 4000);
-
-  useEffect(() => {
-    setDraft(familyProfile);
-    setHouseholdError(null);
-    setErrorMsg(null);
-  }, [familyProfile]);
 
   const handleSave = (e: FormEvent) => {
     e.preventDefault();

@@ -40,6 +40,55 @@ const CONDITION_BADGE_MAP = {
   },
 } as const;
 
+const OUTDOOR_RISK_META = {
+  severe: { label: 'Severe Risk', className: 'text-red-800' },
+  high: { label: 'High Risk', className: 'text-amber-900' },
+  moderate: { label: 'Moderate Risk', className: 'text-amber-800' },
+  low: { label: 'Low Risk', className: 'text-green-800' },
+  unknown: { label: 'Unmeasured Risk', className: 'text-slate-700' },
+} as const;
+
+function PlannerDisclosureContent({
+  readingLocationName,
+  providerName,
+  hasReading,
+  hasHourlyCurve,
+  intervalCount,
+}: {
+  readingLocationName: string;
+  providerName: string;
+  hasReading: boolean;
+  hasHourlyCurve: boolean;
+  intervalCount: number;
+}) {
+  if (!hasReading) {
+    return (
+      <span>
+        <strong>Missing Data Condition:</strong> Live AQI and hourly trajectory are
+        currently unavailable. Precautionary guidance is shown below—no outdoor period is
+        assumed cleaner until a verified reading returns.
+      </span>
+    );
+  }
+  if (!hasHourlyCurve) {
+    return (
+      <span>
+        <strong>Single-Point Reading Only:</strong> Hourly trajectory data is unavailable for{' '}
+        {readingLocationName}. BreatheWise does not assume any time of day is
+        cleaner outdoors without verified hourly evidence.
+      </span>
+    );
+  }
+  return (
+    <span>
+      <strong>Hourly Trajectory Active:</strong> Time-block expectations combine{' '}
+      {providerName} current levels with available hourly PM2.5
+      points ({intervalCount} intervals). Hyper-local traffic or burning spikes may
+      still differ.
+    </span>
+  );
+}
+
 export function PlannerPage() {
   const {
     currentReading,
@@ -203,26 +252,13 @@ export function PlannerPage() {
         >
           <Info className="w-4 h-4 shrink-0 mt-0.5" aria-hidden="true" />
           <div>
-            {!currentReading ? (
-              <span>
-                <strong>Missing Data Condition:</strong> Live AQI and hourly trajectory are
-                currently unavailable. Precautionary guidance is shown below—no outdoor period is
-                assumed cleaner until a verified reading returns.
-              </span>
-            ) : !hasHourlyCurve ? (
-              <span>
-                <strong>Single-Point Reading Only:</strong> Hourly trajectory data is unavailable for{' '}
-                {currentReading.location.name}. BreatheWise does not assume any time of day is
-                cleaner outdoors without verified hourly evidence.
-              </span>
-            ) : (
-              <span>
-                <strong>Hourly Trajectory Active:</strong> Time-block expectations combine{' '}
-                {currentReading.provenance.providerName} current levels with available hourly PM2.5
-                points ({hourlyForecast.length} intervals). Hyper-local traffic or burning spikes may
-                still differ.
-              </span>
-            )}
+            <PlannerDisclosureContent
+              readingLocationName={currentReading?.location.name ?? location.name}
+              providerName={currentReading?.provenance.providerName ?? 'AirLive'}
+              hasReading={currentReading !== null}
+              hasHourlyCurve={hasHourlyCurve}
+              intervalCount={hourlyForecast.length}
+            />
           </div>
         </div>
       </Card>
@@ -230,27 +266,7 @@ export function PlannerPage() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {blocks.map((block) => {
           const done = completedPlannerIds.includes(block.id);
-          const riskLabel =
-            block.outdoorRisk === 'severe'
-              ? 'Severe Risk'
-              : block.outdoorRisk === 'high'
-                ? 'High Risk'
-                : block.outdoorRisk === 'moderate'
-                  ? 'Moderate Risk'
-                  : block.outdoorRisk === 'low'
-                    ? 'Low Risk'
-                    : 'Unmeasured Risk';
-
-          const riskClass =
-            block.outdoorRisk === 'severe'
-              ? 'text-red-800'
-              : block.outdoorRisk === 'high'
-                ? 'text-amber-900'
-                : block.outdoorRisk === 'moderate'
-                  ? 'text-amber-800'
-                  : block.outdoorRisk === 'low'
-                    ? 'text-green-800'
-                    : 'text-slate-700';
+          const { label: riskLabel, className: riskClass } = OUTDOOR_RISK_META[block.outdoorRisk];
 
           return (
             <Card key={block.id} className="flex flex-col justify-between gap-4">

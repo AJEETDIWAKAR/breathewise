@@ -6,15 +6,15 @@ interface CardProps {
   padding?: 'none' | 'sm' | 'md' | 'lg';
 }
 
+const PADDING_CLASSES: Record<NonNullable<CardProps['padding']>, string> = {
+  none: '',
+  sm: 'p-4',
+  md: 'p-5',
+  lg: 'p-6 sm:p-7',
+};
+
 export function Card({ children, className = '', padding = 'md' }: CardProps) {
-  const padClass =
-    padding === 'none'
-      ? ''
-      : padding === 'sm'
-        ? 'p-4'
-        : padding === 'lg'
-          ? 'p-6 sm:p-7'
-          : 'p-5';
+  const padClass = PADDING_CLASSES[padding];
 
   return (
     <section

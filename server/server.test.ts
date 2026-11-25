@@ -9,6 +9,7 @@ import { loadServerConfig, type ServerConfig } from './config/env.ts';
 import { AirliveProvider } from './providers/airliveProvider.ts';
 import { OpenMeteoProvider } from './providers/openMeteoProvider.ts';
 import { createRateLimiter } from './middleware/rateLimiter.ts';
+import { securityHeadersMiddleware } from './middleware/security.ts';
 import { AppError, errorHandlerMiddleware } from './middleware/errorHandler.ts';
 import { AirQualityService } from './services/airQualityService.ts';
 import {
@@ -1697,7 +1698,7 @@ describe('Express API Endpoints (AirLive + Gemini)', () => {
     };
 
     const customServer = await startTestServer(makeConfig(), mockGemini);
-    const { baseUrl } = customServer;
+    const { baseUrl: fallbackServerUrl } = customServer;
     try {
       const validClientReading = {
         location: {
@@ -1776,7 +1777,7 @@ describe('Express API Endpoints (AirLive + Gemini)', () => {
       };
 
       // 1. Server AirLive 403 -> uses validated clientReading (US AQI 173)
-      const fallbackRes = await fetch(`${baseUrl}/api/ai/chat`, {
+      const fallbackRes = await fetch(`${fallbackServerUrl}/api/ai/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1797,7 +1798,7 @@ describe('Express API Endpoints (AirLive + Gemini)', () => {
       expect(capturedPrompt).toContain('US AQI: 173');
 
       // 2. Rejects preview_fixture in clientReading (400 VALIDATION_ERROR)
-      const invalidFixtureRes = await fetch(`${baseUrl}/api/ai/chat`, {
+      const invalidFixtureRes = await fetch(`${fallbackServerUrl}/api/ai/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1817,7 +1818,7 @@ describe('Express API Endpoints (AirLive + Gemini)', () => {
       expect(invalidFixtureRes.status).toBe(400);
 
       // 3. Mismatched slug in clientReading is ignored when server AirLive fails
-      const mismatchRes = await fetch(`${baseUrl}/api/ai/chat`, {
+      const mismatchRes = await fetch(`${fallbackServerUrl}/api/ai/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1838,7 +1839,7 @@ describe('Express API Endpoints (AirLive + Gemini)', () => {
 
       // 4. When server AirLive succeeds, server telemetry overrides clientReading (199 vs 173)
       airliveBlocked = false;
-      const serverFirstRes = await fetch(`${baseUrl}/api/ai/chat`, {
+      const serverFirstRes = await fetch(`${fallbackServerUrl}/api/ai/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1858,6 +1859,233 @@ describe('Express API Endpoints (AirLive + Gemini)', () => {
       expect(serverFirstJson.groundedReading?.usAqi).toBe(199);
     } finally {
       await customServer.close();
+    }
+  });
+
+  it('enforces production CSP, HSTS, same-host forwarded origin, and CORS rejection in securityHeadersMiddleware', () => {
+    const prevNodeEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+    try {
+      const mw = securityHeadersMiddleware('https://breathewise.example', ['https://partner.example']);
+      const headers = new Map<string, string>();
+      const makeRes = () => {
+        headers.clear();
+        const res = {
+          statusCode: 200,
+          body: null as unknown,
+          setHeader: (k: string, v: string) => {
+            headers.set(k.toLowerCase(), v);
+          },
+          status(code: number) {
+            this.statusCode = code;
+            return this;
+          },
+          json(payload: unknown) {
+            this.body = payload;
+            return this;
+          },
+          end() {
+            return this;
+          },
+        };
+        return res;
+      };
+
+      // 1. Disallowed OPTIONS preflight -> 403 CORS_ORIGIN_FORBIDDEN + production CSP + HSTS
+      const resOpt = makeRes();
+      const nextOpt = vi.fn();
+      mw(
+        {
+          method: 'OPTIONS',
+          path: '/api/ai/chat',
+          secure: false,
+          headers: {
+            origin: 'https://evil.example',
+            host: 'breathewise-one.vercel.app',
+            'x-forwarded-proto': 'https',
+          },
+        } as unknown as Parameters<typeof mw>[0],
+        resOpt as unknown as Parameters<typeof mw>[1],
+        nextOpt,
+      );
+      expect(resOpt.statusCode).toBe(403);
+      expect(nextOpt).not.toHaveBeenCalled();
+      expect(headers.get('strict-transport-security')).toContain('max-age=31536000');
+      expect(headers.get('content-security-policy')).toContain("script-src 'self'");
+      expect(headers.get('cache-control')).toBe('no-store');
+
+      // 2. Disallowed POST -> 403
+      const resPost = makeRes();
+      const nextPost = vi.fn();
+      mw(
+        {
+          method: 'POST',
+          path: '/api/ai/chat',
+          secure: true,
+          headers: {
+            origin: 'https://evil.example',
+            host: 'breathewise-one.vercel.app',
+          },
+        } as unknown as Parameters<typeof mw>[0],
+        resPost as unknown as Parameters<typeof mw>[1],
+        nextPost,
+      );
+      expect(resPost.statusCode).toBe(403);
+
+      // 3. Same x-forwarded-host allowed on OPTIONS -> 204
+      const resSame = makeRes();
+      const nextSame = vi.fn();
+      mw(
+        {
+          method: 'OPTIONS',
+          path: '/api/air-quality/current',
+          secure: false,
+          headers: {
+            origin: 'https://preview.breathewise.app',
+            'x-forwarded-host': 'preview.breathewise.app',
+            'x-forwarded-proto': 'https',
+          },
+        } as unknown as Parameters<typeof mw>[0],
+        resSame as unknown as Parameters<typeof mw>[1],
+        nextSame,
+      );
+      expect(resSame.statusCode).toBe(204);
+      expect(headers.get('access-control-allow-origin')).toBe('https://preview.breathewise.app');
+
+      // 4. Extra allowed origin passes POST -> next()
+      const resAllowed = makeRes();
+      const nextAllowed = vi.fn();
+      mw(
+        {
+          method: 'POST',
+          path: '/api/air-quality/recommendations',
+          secure: false,
+          headers: {
+            origin: 'https://partner.example',
+            host: 'breathewise-one.vercel.app',
+          },
+        } as unknown as Parameters<typeof mw>[0],
+        resAllowed as unknown as Parameters<typeof mw>[1],
+        nextAllowed,
+      );
+      expect(nextAllowed).toHaveBeenCalledTimes(1);
+    } finally {
+      process.env.NODE_ENV = prevNodeEnv;
+    }
+  });
+
+  it('evicts expired entries before LRU entries in TtlCache and supports update/size/clear', () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+      const cache = new TtlCache<string>(1000, 2);
+      cache.set('k1', 'v1');
+      cache.set('k1', 'v1-updated');
+      expect(cache.get('k1')?.value).toBe('v1-updated');
+
+      cache.set('k2', 'v2', 200);
+      vi.advanceTimersByTime(300);
+      // k2 expired, setting k3 should prune expired k2 without evicting live k1
+      cache.set('k3', 'v3');
+      expect(cache.get('k1')?.value).toBe('v1-updated');
+      expect(cache.get('k3')?.value).toBe('v3');
+      expect(cache.size()).toBe(2);
+
+      // Adding k4 when both k1 and k3 are live evicts oldest (k1)
+      cache.set('k4', 'v4');
+      expect(cache.get('k1')).toBeNull();
+      expect(cache.get('k4')?.value).toBe('v4');
+
+      cache.clear();
+      expect(cache.size()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('falls back gracefully to rule_based_fallback when Gemini returns malformed JSON or throws', async () => {
+    const nowIso = new Date().toISOString();
+    let failMode: 'malformed' | 'error' = 'malformed';
+
+    const customGemini: GeminiContentClient = {
+      generateStructuredJson: async () => {
+        if (failMode === 'error') {
+          throw new Error('502 Bad Gateway upstream reset');
+        }
+        return 'not valid json {{{';
+      },
+    };
+
+    const realFetch = globalThis.fetch;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === 'string' ? input : input.toString();
+        if (url.startsWith('http://127.0.0.1:')) return realFetch(input, init);
+        return new Response(
+          JSON.stringify({
+            slug: 'delhi',
+            name: 'Delhi',
+            kind: 'city',
+            country: 'IN',
+            countryName: 'India',
+            lat: 28.6139,
+            lon: 77.209,
+            usAqi: 185,
+            category: 'Unhealthy',
+            pm25: 105,
+            source: 'ground stations',
+            stationsUsed: 4,
+            updated: nowIso,
+          }),
+          { status: 200 },
+        );
+      }),
+    );
+
+    const server = await startTestServer(
+      makeConfig({ geminiApiKey: 'test-key-1234567890' }),
+      customGemini,
+    );
+    try {
+      const malformedRes = await fetch(`${server.baseUrl}/api/ai/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: 'Should children play outdoors today?',
+          slug: 'delhi',
+          familyProfile: SAMPLE_FAMILY_PROFILE,
+        }),
+      });
+      expect(malformedRes.status).toBe(200);
+      const malformedJson = (await malformedRes.json()) as {
+        responseSource: string;
+        aiAvailable: boolean;
+        fallbackReasonCode: string;
+      };
+      expect(malformedJson.responseSource).toBe('rule_based_fallback');
+      expect(malformedJson.aiAvailable).toBe(false);
+      expect(malformedJson.fallbackReasonCode).toBe('MALFORMED_AI_RESPONSE');
+
+      failMode = 'error';
+      const errRes = await fetch(`${server.baseUrl}/api/ai/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: 'What indoor measures help under ₹500?',
+          slug: 'delhi',
+          familyProfile: SAMPLE_FAMILY_PROFILE,
+        }),
+      });
+      expect(errRes.status).toBe(200);
+      const errJson = (await errRes.json()) as {
+        responseSource: string;
+        fallbackReasonCode: string;
+      };
+      expect(errJson.responseSource).toBe('rule_based_fallback');
+      expect(errJson.fallbackReasonCode).toBe('UPSTREAM_ERROR');
+    } finally {
+      await server.close();
     }
   });
 });

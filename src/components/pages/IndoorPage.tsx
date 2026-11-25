@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { CheckSquare, ShieldAlert, Square } from 'lucide-react';
 import {
   INDOOR_EVIDENCE_BOUNDARIES,
@@ -35,14 +35,14 @@ export function IndoorPage() {
     setActivePage,
   } = useAppState();
 
-  const [roomAreaInput, setRoomAreaInput] = useState<number>(
-    familyProfile.homeEnvironment.roomAreaSqFt,
-  );
+  const [roomAreaDraft, setRoomAreaDraft] = useState<{ base: number; value: number } | null>(null);
+  const roomAreaInput =
+    roomAreaDraft && roomAreaDraft.base === familyProfile.homeEnvironment.roomAreaSqFt
+      ? roomAreaDraft.value
+      : familyProfile.homeEnvironment.roomAreaSqFt;
+  const setRoomAreaInput = (value: number) =>
+    setRoomAreaDraft({ base: familyProfile.homeEnvironment.roomAreaSqFt, value });
   const [costTab, setCostTab] = useState<CostTabFilter>('all');
-
-  useEffect(() => {
-    setRoomAreaInput(familyProfile.homeEnvironment.roomAreaSqFt);
-  }, [familyProfile.homeEnvironment.roomAreaSqFt]);
 
   const ventWindow = findBestVentilationWindow(hourlyForecast, currentReading);
   const cadr = calculateCadr(Math.max(50, roomAreaInput));

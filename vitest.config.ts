@@ -18,6 +18,12 @@ export default defineConfig({
         'server/providers/types.ts',
         'src/types/**',
       ],
+      thresholds: {
+        statements: 95,
+        lines: 96,
+        functions: 95,
+        branches: 82,
+      },
     },
   },
 });

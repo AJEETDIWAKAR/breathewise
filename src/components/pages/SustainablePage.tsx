@@ -16,6 +16,23 @@ import { SegmentedTabs } from '../ui/Selector';
 
 type AreaFilter = 'all' | SustainableAreaId;
 
+function resolveSafeCeiling(maxSafeUsAqi: number | null, isUsAqi: boolean): number | null {
+  if (maxSafeUsAqi === null) return null;
+  return isUsAqi ? maxSafeUsAqi : 150;
+}
+
+function renderLogActionContent(justLogged: boolean, unsafeNow: boolean) {
+  if (justLogged) {
+    return (
+      <>
+        <Check className="w-3.5 h-3.5" aria-hidden="true" />
+        <span>Logged to tracker</span>
+      </>
+    );
+  }
+  return unsafeNow ? 'Deferred (high AQI)' : 'Log this action';
+}
+
 export function SustainablePage() {
   const { currentReading, familyProfile, addImpactLog, setActivePage } = useAppState();
   const [filter, setFilter] = useState<AreaFilter>('all');
@@ -103,12 +120,7 @@ export function SustainablePage() {
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
           {filtered.map((item) => {
-            const safeCeiling =
-              item.maxSafeAqiForOutdoor !== null
-                ? isUsAqi
-                  ? item.maxSafeAqiForOutdoor
-                  : 150
-                : null;
+            const safeCeiling = resolveSafeCeiling(item.maxSafeAqiForOutdoor, isUsAqi);
             const unsafeNow =
               safeCeiling !== null && activeAqi !== null && activeAqi > safeCeiling;
             const justLogged = loggedId === item.id;
@@ -185,16 +197,7 @@ export function SustainablePage() {
                     disabled={unsafeNow}
                     onClick={() => handleLogChoice(item)}
                   >
-                    {justLogged ? (
-                      <>
-                        <Check className="w-3.5 h-3.5" aria-hidden="true" />
-                        <span>Logged to tracker</span>
-                      </>
-                    ) : unsafeNow ? (
-                      'Deferred (high AQI)'
-                    ) : (
-                      'Log this action'
-                    )}
+                    {renderLogActionContent(justLogged, unsafeNow)}
                   </Button>
                   <button
                     type="button"

@@ -22,9 +22,12 @@ export function useFocusTrap({
 }: UseFocusTrapOptions): void {
   const previousFocusRef = useRef<HTMLElement | null>(null);
   const onEscapeRef = useRef(onEscape);
-  onEscapeRef.current = onEscape;
   const shouldRestoreRef = useRef(shouldRestoreFocus);
-  shouldRestoreRef.current = shouldRestoreFocus;
+
+  useEffect(() => {
+    onEscapeRef.current = onEscape;
+    shouldRestoreRef.current = shouldRestoreFocus;
+  });
 
   useEffect(() => {
     if (!active) return;

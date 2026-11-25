@@ -39,6 +39,14 @@ export const SUSTAINABLE_AREA_LABELS: Record<SustainableAreaId, string> = {
   sustainable_shopping: 'Sustainable Shopping',
 };
 
+function resolveBaselineCommuteMode(
+  primaryCommute: FamilyProfile['lifestyle']['primaryCommute'],
+): 'petrol_car' | 'diesel_car' | 'two_wheeler' {
+  if (primaryCommute === 'diesel_car') return 'diesel_car';
+  if (primaryCommute === 'two_wheeler') return 'two_wheeler';
+  return 'petrol_car';
+}
+
 export function getPersonalizedSustainableAlternatives(
   profile: FamilyProfile,
   reading: AirQualityReading | null,
@@ -50,12 +58,7 @@ export function getPersonalizedSustainableAlternatives(
       ? `Displaces ~${(commuteKm / 14).toFixed(1)} L petrol/day; net savings depend on local Metro/bus fare vs. fuel & parking`
       : 'Net savings depend on city transit fares vs. private fuel/parking expenses';
 
-  const baselineFromProfile: 'petrol_car' | 'diesel_car' | 'two_wheeler' =
-    profile.lifestyle.primaryCommute === 'diesel_car'
-      ? 'diesel_car'
-      : profile.lifestyle.primaryCommute === 'two_wheeler'
-        ? 'two_wheeler'
-        : 'petrol_car';
+  const baselineFromProfile = resolveBaselineCommuteMode(profile.lifestyle.primaryCommute);
 
   const aqiNote =
     reading && reading.aqi.value !== null

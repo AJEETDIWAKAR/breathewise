@@ -9,6 +9,13 @@ interface PollutionStatusBadgeProps {
   compact?: boolean;
 }
 
+const TONE_ICONS = {
+  success: CheckCircle2,
+  info: Info,
+  warning: AlertTriangle,
+  critical: AlertOctagon,
+} as const;
+
 export function PollutionStatusBadge({
   category,
   scale,
@@ -23,14 +30,7 @@ export function PollutionStatusBadge({
       ? getUsAqiVisualTokens((normalizeUsAqiCategoryLabel(category) ?? 'Unavailable') as UsAqiCategory | 'Unavailable')
       : getNaqiVisualTokens(category as NaqiCategory | 'Unavailable');
 
-  const Icon =
-    tokens.tone === 'success'
-      ? CheckCircle2
-      : tokens.tone === 'info'
-        ? Info
-        : tokens.tone === 'warning'
-          ? AlertTriangle
-          : AlertOctagon;
+  const Icon = TONE_ICONS[tokens.tone];
 
   return (
     <span

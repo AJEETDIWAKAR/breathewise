@@ -1,33 +1,24 @@
-import type React from 'react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import {
   Activity,
   BarChart3,
-  Bell,
   CalendarClock,
-  ChevronDown,
   Home,
   LayoutDashboard,
   Leaf,
   Menu,
   MessageSquare,
   Settings,
-  User,
   Users,
   Wind,
-  X,
 } from 'lucide-react';
-import { useFocusTrap } from '../../hooks/useFocusTrap';
 import { useAppState } from '../../state/AppStateContext';
 import type { PageId } from '../../types/breathewise';
 import { LocationSelector } from '../ui/LocationSelector';
+import { HeaderMenus } from './HeaderMenus';
+import { MobileNavDrawer, type NavItem } from './MobileNavDrawer';
 
-export interface NavItem {
-  id: PageId;
-  label: string;
-  shortLabel: string;
-  icon: React.ComponentType<{ className?: string }>;
-}
+export type { NavItem };
 
 export const NAV_ITEMS: NavItem[] = [
   { id: 'overview', label: 'Overview', shortLabel: 'Overview', icon: LayoutDashboard },
@@ -43,7 +34,7 @@ export const NAV_ITEMS: NavItem[] = [
 
 const MOBILE_BAR_IDS: PageId[] = ['overview', 'air-quality', 'planner', 'assistant'];
 
-export function AppShell({ children }: { children: React.ReactNode }) {
+export function AppShell({ children }: { children: ReactNode }) {
   const {
     activePage,
     setActivePage,
@@ -53,87 +44,19 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   } = useAppState();
 
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [notifOpen, setNotifOpen] = useState(false);
-  const [profileOpen, setProfileOpen] = useState(false);
-
-  const notifRef = useRef<HTMLDivElement | null>(null);
-  const notifTriggerRef = useRef<HTMLButtonElement | null>(null);
-  const profileRef = useRef<HTMLDivElement | null>(null);
-  const profileTriggerRef = useRef<HTMLButtonElement | null>(null);
-  const profileMenuRef = useRef<HTMLDivElement | null>(null);
-  const mobileDrawerRef = useRef<HTMLDivElement | null>(null);
-  const mobileCloseBtnRef = useRef<HTMLButtonElement | null>(null);
-
-  const closeMobileMenu = useCallback(() => setMobileMenuOpen(false), []);
-  useFocusTrap({
-    active: mobileMenuOpen,
-    containerRef: mobileDrawerRef,
-    initialFocusRef: mobileCloseBtnRef,
-    onEscape: closeMobileMenu,
-    restoreFocus: true,
-  });
-
-  useEffect(() => {
-    if (!notifOpen && !profileOpen) return;
-
-    const handleClickOutside = (e: MouseEvent) => {
-      const target = e.target as Node;
-      if (notifOpen && notifRef.current && !notifRef.current.contains(target)) {
-        setNotifOpen(false);
-      }
-      if (profileOpen && profileRef.current && !profileRef.current.contains(target)) {
-        setProfileOpen(false);
-      }
-    };
-
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        const wasProfileOpen = profileOpen;
-        const wasNotifOpen = notifOpen;
-        setNotifOpen(false);
-        setProfileOpen(false);
-        if (wasProfileOpen) {
-          profileTriggerRef.current?.focus();
-        } else if (wasNotifOpen) {
-          notifTriggerRef.current?.focus();
-        }
-        return;
-      }
-
-      if (profileOpen && profileMenuRef.current && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
-        const items = Array.from(
-          profileMenuRef.current.querySelectorAll<HTMLElement>('[role="menuitem"]'),
-        );
-        if (items.length > 0) {
-          e.preventDefault();
-          const currentIdx = items.findIndex((el) => el === document.activeElement);
-          const nextIdx =
-            e.key === 'ArrowDown'
-              ? (currentIdx + 1) % items.length
-              : (currentIdx - 1 + items.length) % items.length;
-          items[nextIdx]?.focus();
-        }
-      }
-    };
-
-    document.addEventListener('mousedown', handleClickOutside);
-    document.addEventListener('keydown', handleKeyDown);
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
-      document.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [notifOpen, profileOpen]);
 
   const unreadCount = notifications.filter((n) => !n.read).length;
   const totalMembers =
     familyProfile.members.adults + familyProfile.members.children + familyProfile.members.seniors;
   const currentNav = NAV_ITEMS.find((item) => item.id === activePage) ?? NAV_ITEMS[0];
 
+  useEffect(() => {
+    document.title = `${currentNav.label} – BreatheWise`;
+  }, [currentNav.label]);
+
   const handleSelectPage = (id: PageId) => {
     setActivePage(id);
     setMobileMenuOpen(false);
-    setNotifOpen(false);
-    setProfileOpen(false);
   };
 
   return (
@@ -145,7 +68,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         Skip to main content
       </a>
 
-      {/* Desktop Sidebar */}
       <aside
         aria-label="Primary sidebar"
         className="hidden lg:flex lg:flex-col lg:w-64 lg:shrink-0 bg-white border-r border-slate-200 sticky top-0 h-screen"
@@ -198,68 +120,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </div>
       </aside>
 
-      {/* Mobile Slide-Over Drawer */}
-      {mobileMenuOpen && (
-        <div
-          className="fixed inset-0 z-50 lg:hidden flex"
-          role="dialog"
-          aria-modal="true"
-          aria-label="Mobile navigation menu"
-        >
-          <div
-            className="fixed inset-0 bg-slate-900/45"
-            onClick={() => setMobileMenuOpen(false)}
-          />
-          <div
-            ref={mobileDrawerRef}
-            className="relative z-10 w-72 max-w-[85vw] bg-white h-full border-r border-slate-200 flex flex-col"
-          >
-            <div className="flex items-center justify-between px-4 py-4 border-b border-slate-200">
-              <div className="flex items-center gap-2">
-                <div className="w-7 h-7 rounded-md bg-teal-700 text-white flex items-center justify-center">
-                  <Wind className="w-4 h-4" aria-hidden="true" />
-                </div>
-                <span className="font-bold text-slate-900">BreatheWise</span>
-              </div>
-              <button
-                ref={mobileCloseBtnRef}
-                type="button"
-                onClick={() => setMobileMenuOpen(false)}
-                aria-label="Close navigation menu"
-                className="p-2 text-slate-700 hover:bg-slate-100 rounded-md cursor-pointer"
-              >
-                <X className="w-5 h-5" aria-hidden="true" />
-              </button>
-            </div>
-            <nav aria-label="Mobile full navigation" className="flex-1 overflow-y-auto p-3 space-y-1">
-              {NAV_ITEMS.map((item) => {
-                const Icon = item.icon;
-                const active = activePage === item.id;
-                return (
-                  <button
-                    key={item.id}
-                    type="button"
-                    aria-current={active ? 'page' : undefined}
-                    onClick={() => handleSelectPage(item.id)}
-                    className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-md text-sm font-medium text-left cursor-pointer ${
-                      active
-                        ? 'bg-teal-50 text-teal-900 border border-teal-200'
-                        : 'text-slate-700 hover:bg-slate-100 border border-transparent'
-                    }`}
-                  >
-                    <Icon className="w-4 h-4 shrink-0" aria-hidden="true" />
-                    <span>{item.label}</span>
-                  </button>
-                );
-              })}
-            </nav>
-          </div>
-        </div>
-      )}
+      <MobileNavDrawer
+        open={mobileMenuOpen}
+        activePage={activePage}
+        navItems={NAV_ITEMS}
+        onClose={() => setMobileMenuOpen(false)}
+        onSelectPage={handleSelectPage}
+      />
 
-      {/* Main Column */}
       <div className="flex-1 min-w-0 flex flex-col pb-16 lg:pb-0">
-        {/* Top Header */}
         <header className="sticky top-0 z-30 bg-white border-b border-slate-200 px-3 sm:px-6 py-2.5 sm:py-3">
           <div className="max-w-6xl mx-auto flex items-center justify-between gap-2 sm:gap-3">
             <div className="flex items-center gap-2 sm:gap-3 min-w-0">
@@ -281,145 +150,27 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             </div>
 
             <div className="flex items-center gap-1.5 sm:gap-3 shrink-0">
-              {/* Searchable AirLive Location Selector */}
               <LocationSelector />
-
-              {/* Notification Area */}
-              <div ref={notifRef} className="relative">
-                <button
-                  ref={notifTriggerRef}
-                  type="button"
-                  aria-label={`Notifications (${unreadCount} unread)`}
-                  aria-expanded={notifOpen}
-                  onClick={() => {
-                    setNotifOpen((prev) => !prev);
-                    setProfileOpen(false);
-                  }}
-                  className="relative p-2 text-slate-700 hover:bg-slate-100 border border-slate-200 rounded-md cursor-pointer"
-                >
-                  <Bell className="w-4 h-4" aria-hidden="true" />
-                  {unreadCount > 0 && (
-                    <span className="absolute -top-1 -right-1 min-w-[17px] h-[17px] px-1 rounded-full bg-amber-800 text-white text-[10px] font-semibold flex items-center justify-center tabular-nums">
-                      {unreadCount}
-                    </span>
-                  )}
-                </button>
-
-                {notifOpen && (
-                  <div
-                    role="region"
-                    aria-label="Notifications panel"
-                    className="absolute right-0 mt-2 w-80 max-w-[90vw] bg-white border border-slate-200 rounded-lg shadow-sm z-40"
-                  >
-                    <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200">
-                      <h2 className="text-sm font-semibold text-slate-900">Notifications</h2>
-                      {unreadCount > 0 && (
-                        <button
-                          type="button"
-                          onClick={markAllNotificationsRead}
-                          className="min-h-6 px-2 py-1 inline-flex items-center rounded text-xs font-medium text-teal-800 hover:bg-teal-50 hover:text-teal-900 cursor-pointer"
-                        >
-                          Mark all read
-                        </button>
-                      )}
-                    </div>
-                    <ul className="divide-y divide-slate-100 max-h-72 overflow-y-auto">
-                      {notifications.map((notif) => (
-                        <li key={notif.id} className="p-3.5 hover:bg-slate-50">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              if (notif.targetPage) handleSelectPage(notif.targetPage);
-                              else setNotifOpen(false);
-                            }}
-                            className="w-full text-left space-y-1 cursor-pointer"
-                          >
-                            <div className="flex items-center justify-between gap-2">
-                              <span
-                                className={`text-xs font-semibold ${
-                                  notif.read ? 'text-slate-700' : 'text-slate-900'
-                                }`}
-                              >
-                                {notif.title}
-                              </span>
-                              <span className="text-[11px] text-slate-600">{notif.timestamp}</span>
-                            </div>
-                            <p className="text-xs text-slate-600 leading-relaxed">{notif.message}</p>
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-              </div>
-
-              {/* User Profile Area */}
-              <div ref={profileRef} className="relative">
-                <button
-                  ref={profileTriggerRef}
-                  type="button"
-                  aria-label="Household profile menu"
-                  aria-expanded={profileOpen}
-                  onClick={() => {
-                    setProfileOpen((prev) => !prev);
-                    setNotifOpen(false);
-                  }}
-                  className="flex items-center gap-2 px-2 sm:px-2.5 py-1.5 border border-slate-200 rounded-md hover:bg-slate-50 cursor-pointer"
-                >
-                  <div className="w-6 h-6 rounded-md bg-sky-100 text-sky-900 flex items-center justify-center shrink-0">
-                    <User className="w-3.5 h-3.5" aria-hidden="true" />
-                  </div>
-                  <span className="hidden md:inline text-sm font-medium text-slate-800 max-w-[200px] truncate">
-                    {familyProfile.householdName}
-                  </span>
-                  <ChevronDown className="w-3.5 h-3.5 text-slate-600 hidden sm:block" aria-hidden="true" />
-                </button>
-
-                {profileOpen && (
-                  <div
-                    ref={profileMenuRef}
-                    role="menu"
-                    aria-label="Profile options"
-                    className="absolute right-0 mt-2 w-60 bg-white border border-slate-200 rounded-lg shadow-sm z-40 py-1.5"
-                  >
-                    <div className="px-4 py-2 border-b border-slate-100">
-                      <p className="text-sm font-semibold text-slate-900 truncate">
-                        {familyProfile.householdName}
-                      </p>
-                      <p className="text-xs text-slate-600 tabular-nums">
-                        {totalMembers} members · {familyProfile.lifestyle.dailyCommuteKm} km/day
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      role="menuitem"
-                      onClick={() => handleSelectPage('family')}
-                      className="w-full px-4 py-2 text-left text-sm text-slate-700 hover:bg-slate-50 cursor-pointer"
-                    >
-                      Edit My Family Profile
-                    </button>
-                    <button
-                      type="button"
-                      role="menuitem"
-                      onClick={() => handleSelectPage('settings')}
-                      className="w-full px-4 py-2 text-left text-sm text-slate-700 hover:bg-slate-50 cursor-pointer"
-                    >
-                      Data Mode & Settings
-                    </button>
-                  </div>
-                )}
-              </div>
+              <HeaderMenus
+                familyProfile={familyProfile}
+                totalMembers={totalMembers}
+                notifications={notifications}
+                unreadCount={unreadCount}
+                onMarkAllNotificationsRead={markAllNotificationsRead}
+                onSelectPage={handleSelectPage}
+              />
             </div>
           </div>
         </header>
 
-        {/* Main Viewport */}
         <main id="main-content" tabIndex={-1} className="flex-1 px-4 sm:px-6 py-6 focus:outline-none">
+          <p className="sr-only" aria-live="polite">
+            {currentNav.label} view active
+          </p>
           <div className="max-w-6xl mx-auto space-y-6">{children}</div>
         </main>
       </div>
 
-      {/* Mobile Bottom Navigation Bar (compact <= 60px, < 15% of 844px mobile viewport) */}
       <nav
         aria-label="Mobile quick navigation"
         className="lg:hidden fixed bottom-0 inset-x-0 z-30 bg-white border-t border-slate-200 grid grid-cols-5 h-14"
